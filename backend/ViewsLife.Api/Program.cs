@@ -1,3 +1,5 @@
+using ViewsLife.Api.Infrastructure.Options;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -15,6 +17,15 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod();
     });
 });
+builder.Services.Configure<JwtOptions>(
+    builder.Configuration.GetSection(JwtOptions.SectionName)
+);
+builder.Services.Configure<AppleOptions>(
+    builder.Configuration.GetSection(AppleOptions.SectionName)
+);
+builder.Services.Configure<OpenAiOptions>(
+    builder.Configuration.GetSection(OpenAiOptions.SectionName)
+);
 
 var app = builder.Build();
 
