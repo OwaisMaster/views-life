@@ -9,6 +9,6 @@ export function getApiBaseUrl(): string {
     return apiBaseUrl;
 }
 
-export function buildApiURL(path: string): string {
+export function buildApiUrl(path: string): string {
     return `${getApiBaseUrl()}${path}`;
 }

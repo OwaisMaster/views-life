@@ -1,5 +1,4 @@
-import build from "next/dist/build";
-import { buildApiURL } from "./api";
+import { buildApiUrl } from "./api";
 
 export interface HealthResponse {
     status: string;
@@ -9,7 +8,7 @@ export interface HealthResponse {
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
-    const response = await fetch(buildApiURL("/api/health"), {
+    const response = await fetch(buildApiUrl("/api/health"), {
         method: "GET",
         headers: {
             "Content-Type": "application/json",

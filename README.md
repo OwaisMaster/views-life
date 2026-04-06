@@ -24,3 +24,7 @@ Run from `backend/`:
 ```bash
 dotnet restore
 dotnet run
+
+### Infra
+docker compose -f docker-compose.postgres.yml up -d
+docker compose -f docker-compose.postgres.yml down
