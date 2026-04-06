@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ViewsLife.Api.Infrastructure.Options;
 using ViewsLife.Api.Infrastructure.Persistence;
 using ViewsLife.Api.Domains.Auth.Interfaces;
+using ViewsLife.Api.Domains.Auth.Repositories;
 using ViewsLife.Api.Domains.Auth.Services;
 using Microsoft.Extensions.Options;
 
@@ -32,6 +33,8 @@ builder.Services.Configure<OpenAiOptions>(
     builder.Configuration.GetSection(OpenAiOptions.SectionName)
 );
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException(
@@ -53,3 +56,7 @@ app.UseHttpsRedirection();
 app.UseCors("FrontendDev");
 app.MapControllers();
 app.Run();
+
+public partial class Program
+{
+}
