@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Domains.Auth.Dtos;
@@ -23,7 +26,7 @@ public sealed class AuthController : ControllerBase
     }
 
     /// Temporary development sign-in endpoint.
-    /// This endpoint creates or finds a user and stores the user identifier in a development cookie.
+    /// This endpoint creates or finds a user and issues a real ASP.NET Core auth cookie.
     /// It must not be callable outside Development.
     ///
     /// Route: POST /api/auth/dev-sign-in
@@ -37,7 +40,7 @@ public sealed class AuthController : ControllerBase
         [FromBody] DevSignInRequestDto request,
         CancellationToken cancellationToken)
     {
-        // Protects the endpoint so it only exists as a local development bridge.
+        // Restricts the endpoint to Development only.
         if (!_environment.IsDevelopment())
         {
             return NotFound();
@@ -46,40 +49,63 @@ public sealed class AuthController : ControllerBase
         AuthResponseDto response =
             await _authService.SignInForDevelopmentAsync(request, cancellationToken);
 
-        // Stores the current application user identifier in a secure development cookie.
-        // This is a temporary bootstrap mechanism until real authentication is wired in.
-        Response.Cookies.Append(
-            AuthConstants.DevUserIdCookieName,
-            response.UserId,
-            new CookieOptions
+        // Builds claims for the authenticated application user.
+        var claims = new List<Claim>
+        {
+            new(AuthConstants.UserIdClaimType, response.UserId),
+            new(ClaimTypes.NameIdentifier, response.UserId),
+            new(ClaimTypes.Name, response.DisplayName),
+            new("auth_provider", response.AuthProvider)
+        };
+
+        // Creates the claims identity and principal used by cookie authentication.
+        var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
+        var principal = new ClaimsPrincipal(identity);
+
+        // Issues the real authentication cookie through ASP.NET Core auth middleware.
+        await HttpContext.SignInAsync(
+            AuthConstants.AuthScheme,
+            principal,
+            new AuthenticationProperties
             {
-                HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.Lax,
-                IsEssential = true
+                IsPersistent = true,
+                AllowRefresh = true,
+                IssuedUtc = DateTimeOffset.UtcNow
             });
 
         return Ok(response);
     }
 
-    /// Returns the current persisted user based on the development cookie.
+    /// Returns the current persisted user based on the authenticated claims principal.
     /// Route: GET /api/auth/me
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The current user response.</returns>
+    [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
     [HttpGet("me")]
     [ProducesResponseType(typeof(CurrentUserResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<CurrentUserResponseDto>> Me(
         CancellationToken cancellationToken)
     {
-        // Reads the current user identifier from the development cookie.
-        Request.Cookies.TryGetValue(
-            AuthConstants.DevUserIdCookieName,
-            out string? currentUserId);
+        // Reads the application user identifier from authenticated claims.
+        string? currentUserId = User.FindFirstValue(AuthConstants.UserIdClaimType);
 
         CurrentUserResponseDto response =
             await _authService.GetCurrentUserAsync(currentUserId, cancellationToken);
 
         return Ok(response);
+    }
+
+    /// Signs the current user out by clearing the auth cookie.
+    /// Route: POST /api/auth/sign-out
+    /// <returns>No content when sign-out succeeds.</returns>
+    [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
+    [HttpPost("sign-out")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> SignOut()
+    {
+        await HttpContext.SignOutAsync(AuthConstants.AuthScheme);
+        return NoContent();
     }
 
     /// Placeholder Apple sign-in endpoint.

@@ -5,11 +5,6 @@ using ViewsLife.Api.Domains.Auth.Interfaces;
 namespace ViewsLife.Api.Domains.Auth.Services;
 
 /// Auth application service for development and future provider-backed sign-in flows.
-///
-/// Context:
-/// - This service now uses the database through IUserRepository.
-/// - The development sign-in path creates or finds a persisted user row.
-/// - Real Apple token validation will be added next without changing the controller contract drastically.
 public sealed class AuthService : IAuthService
 {
     private readonly IUserRepository _userRepository;
@@ -25,7 +20,7 @@ public sealed class AuthService : IAuthService
         DevSignInRequestDto request,
         CancellationToken cancellationToken = default)
     {
-        // Tries to find an existing user for the provider + subject combination first.
+        // Attempts to find an existing user first based on provider identity.
         ApplicationUser? existingUser = await _userRepository.GetByProviderAsync(
             request.AuthProvider,
             request.ProviderSubjectId,
@@ -39,7 +34,7 @@ public sealed class AuthService : IAuthService
         }
         else
         {
-            // Creates a new persisted user row when one does not already exist.
+            // Creates a new persisted user when one does not already exist.
             user = new ApplicationUser
             {
                 DisplayName = request.DisplayName,
@@ -55,13 +50,12 @@ public sealed class AuthService : IAuthService
             await _userRepository.SaveChangesAsync(cancellationToken);
         }
 
-        // Returns a temporary auth response.
-        // The AccessToken value is still placeholder until real JWT/cookie auth is implemented.
         return new AuthResponseDto
         {
-            AccessToken = "development-placeholder-token",
             UserId = user.Id,
-            DisplayName = user.DisplayName
+            DisplayName = user.DisplayName,
+            IsAuthenticated = true,
+            AuthProvider = user.AuthProvider
         };
     }
 
@@ -69,7 +63,7 @@ public sealed class AuthService : IAuthService
         string? userId,
         CancellationToken cancellationToken = default)
     {
-        // Returns an unauthenticated result if there is no current user context yet.
+        // Returns an unauthenticated result if no user id is present in claims.
         if (string.IsNullOrWhiteSpace(userId))
         {
             return new CurrentUserResponseDto
@@ -80,7 +74,7 @@ public sealed class AuthService : IAuthService
             };
         }
 
-        // Loads the persisted user from the database.
+        // Loads the current user from the database.
         ApplicationUser? user = await _userRepository.GetByIdAsync(userId, cancellationToken);
 
         if (user is null || !user.IsActive)
@@ -105,8 +99,6 @@ public sealed class AuthService : IAuthService
         AppleSignInRequestDto request,
         CancellationToken cancellationToken = default)
     {
-        // Real Apple validation will be implemented in the next slice.
-        // For now, keep this unimplemented so the API contract exists without pretending it works.
         throw new NotImplementedException("Apple sign-in validation has not been implemented yet.");
     }
 }

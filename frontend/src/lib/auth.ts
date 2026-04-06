@@ -1,27 +1,43 @@
-import { buildApiUrl } from "./api";
+import { buildFrontendApiUrl } from "@/lib/api";
 
-// Represents the expected payload returned by the backend auth bootstrap endpoint.
+/**
+ * Represents the lightweight current-user payload returned by the auth API.
+ * This is used to bootstrap frontend auth/session state.
+ */
 export interface CurrentUserResponse {
-    userId: string;
-    displayName: string;
-    isAuthenticated: boolean;
+  userId: string;
+  displayName: string;
+  isAuthenticated: boolean;
 }
 
-// Calls the backend current-user endpoint.
-// This is an early bootstrap request that will later drive app-level auth state.
+/**
+ * Calls the frontend BFF current-user endpoint.
+ *
+ * Context:
+ * - In the browser, auth cookies are sent automatically.
+ * - In SSR, the caller must forward the incoming cookie header manually.
+ *
+ * @param cookieHeader Optional raw cookie header for SSR requests
+ * @returns The current-user response
+ */
+export async function fetchCurrentUser(
+  cookieHeader?: string
+): Promise<CurrentUserResponse> {
+  const response = await fetch(buildFrontendApiUrl("/api/auth/me"), {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    cache: "no-store",
+    credentials: "include",
+  });
 
-export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
-    const response = await fetch(buildApiUrl("/api/auth/me"), {
-        method: "GET",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        cache: "no-store",
-    });
+  if (!response.ok) {
+    throw new Error(
+      `Current user endpoint failed with status ${response.status}.`
+    );
+  }
 
-    if (!response.ok) {
-        throw new Error(`Current user endpoint failed with status ${response.status}.`);
-    }
-    
-    return (await response.json()) as CurrentUserResponse;
+  return (await response.json()) as CurrentUserResponse;
 }

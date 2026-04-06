@@ -1,22 +1,14 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import DevAuthPanel from "@/components/auth/DevAuthPanel";
 import { fetchHealth, type HealthResponse } from "@/lib/health";
 import { fetchCurrentUser, type CurrentUserResponse } from "@/lib/auth";
 
-/**
- * Represents the result of a bootstrap request.
- * This preserves the actual error message so local SSR/network issues
- * are visible during development.
- */
 interface RequestResult<T> {
   data: T | null;
   error: string | null;
 }
 
-/**
- * Executes a request safely and captures a readable error message.
- *
- * @param request Async request function
- * @returns A result containing either data or an error message
- */
 async function getSafeResult<T>(
   request: () => Promise<T>
 ): Promise<RequestResult<T>> {
@@ -28,17 +20,10 @@ async function getSafeResult<T>(
       error: null,
     };
   } catch (requestError) {
-    console.error("SSR bootstrap request failed:", requestError);
-
     let message = "Unknown request error.";
 
     if (requestError instanceof Error) {
-      const cause =
-        "cause" in requestError ? String(requestError.cause) : null;
-
-      message = cause
-        ? `${requestError.name}: ${requestError.message} | Cause: ${cause}`
-        : `${requestError.name}: ${requestError.message}`;
+      message = `${requestError.name}: ${requestError.message}`;
     }
 
     return {
@@ -48,15 +33,18 @@ async function getSafeResult<T>(
   }
 }
 
-/**
- * Server-rendered home page used to verify backend connectivity and
- * auth bootstrap during early development.
- */
 export default async function Home() {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
+
   const [healthResult, currentUserResult] = await Promise.all([
     getSafeResult<HealthResponse>(fetchHealth),
-    getSafeResult<CurrentUserResponse>(fetchCurrentUser),
+    getSafeResult<CurrentUserResponse>(() => fetchCurrentUser(cookieHeader)),
   ]);
+
+  if (currentUserResult.data?.isAuthenticated) {
+    redirect("/dashboard");
+  }
 
   return (
     <main className="min-h-screen px-6 py-12">
@@ -64,14 +52,15 @@ export default async function Home() {
         <header className="space-y-2">
           <h1 className="text-3xl font-bold">ViewsLife</h1>
           <p className="text-sm text-gray-600">
-            Server-side frontend bootstrap check
+            Public entry point and development auth check
           </p>
         </header>
 
         <section className="rounded-xl border p-4">
           <h2 className="mb-2 text-lg font-semibold">Frontend Configuration</h2>
           <p className="text-sm">
-            API Base URL: {process.env.NEXT_PUBLIC_API_BASE_URL ?? "Not set"}
+            Backend API Base URL:{" "}
+            {process.env.NEXT_PUBLIC_API_BASE_URL ?? "Not set"}
           </p>
         </section>
 
@@ -102,20 +91,19 @@ export default async function Home() {
                 <strong>Connection:</strong> Failed
               </p>
               <p>
-                <strong>Error:</strong> {healthResult.error}
+                <strong>Error:</strong> {healthResult.error ?? "Unknown error"}
               </p>
             </div>
           )}
         </section>
 
+        <DevAuthPanel />
+
         <section className="rounded-xl border p-4">
-          <h2 className="mb-2 text-lg font-semibold">Current User Bootstrap</h2>
+          <h2 className="mb-2 text-lg font-semibold">Current User</h2>
 
           {currentUserResult.data ? (
             <div className="space-y-2 text-sm">
-              <p>
-                <strong>Request:</strong> Successful
-              </p>
               <p>
                 <strong>User ID:</strong> {currentUserResult.data.userId}
               </p>
@@ -134,7 +122,8 @@ export default async function Home() {
                 <strong>Request:</strong> Failed
               </p>
               <p>
-                <strong>Error:</strong> {currentUserResult.error}
+                <strong>Error:</strong>{" "}
+                {currentUserResult.error ?? "Unknown error"}
               </p>
             </div>
           )}
