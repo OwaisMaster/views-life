@@ -1,1 +1,88 @@
 appsettings.json
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# --- Logs ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Node / Next ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+frontend/coverage/
+
+# Local environment files
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Certificates and local secrets
+frontend/certs/
+frontend/*.pem
+frontend/*.key
+frontend/*.crt
+frontend/*.p12
+frontend/*.pfx
+
+# --- .NET / ASP.NET ---
+**/bin/
+**/obj/
+**/.vs/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local environment / secrets
+backend/**/appsettings.Development.json
+backend/**/appsettings.Local.json
+backend/**/.env
+backend/**/.env.local
+
+# Certificates / local secrets
+backend/certs/
+backend/*.pem
+backend/*.key
+backend/*.crt
+backend/*.p12
+backend/*.pfx
+
+# EF / generated artifacts if any custom local outputs appear
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Docker / infra local state ---
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.env
+infra/.env.local
+
+# Docker local overrides
+docker-compose.override.yml
+
+# --- Coverage ---
+coverage/
+coverage-report/
+*.coverage
+*.coveragexml
+
+# --- Misc temp files ---
+tmp/
+temp/
+*.tmp
