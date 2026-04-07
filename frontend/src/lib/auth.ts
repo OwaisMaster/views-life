@@ -8,6 +8,9 @@ export interface CurrentUserResponse {
   userId: string;
   displayName: string;
   isAuthenticated: boolean;
+  tenantId: string;
+  tenantName: string;
+  tenantRole: string;
 }
 
 /**

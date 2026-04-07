@@ -8,7 +8,7 @@ using ViewsLife.Api.Domains.Auth.Interfaces;
 
 namespace ViewsLife.Api.Controllers;
 
-/// Exposes authentication endpoints for development bootstrap and future real provider flows.
+/// Exposes auth endpoints for local registration/sign-in and future provider flows.
 [ApiController]
 [Route("api/[controller]")]
 public sealed class AuthController : ControllerBase
@@ -17,69 +17,69 @@ public sealed class AuthController : ControllerBase
     private readonly IWebHostEnvironment _environment;
 
     /// Creates a new auth controller instance.
-    /// <param name="authService">Auth application service.</param>
-    /// <param name="environment">Hosting environment used to gate development-only endpoints.</param>
     public AuthController(IAuthService authService, IWebHostEnvironment environment)
     {
         _authService = authService;
         _environment = environment;
     }
 
-    /// Temporary development sign-in endpoint.
-    /// This endpoint creates or finds a user and issues a real ASP.NET Core auth cookie.
-    /// It must not be callable outside Development.
-    ///
-    /// Route: POST /api/auth/dev-sign-in
-    /// <param name="request">Development sign-in payload.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The authenticated user response.</returns>
-    [HttpPost("dev-sign-in")]
+    /// Registers a new local account and bootstraps its tenant.
+    /// Route: POST /api/auth/register
+    /// <returns>Authenticated session response.</returns>
+    [HttpPost("register")]
     [ProducesResponseType(typeof(AuthResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<AuthResponseDto>> DevSignIn(
-        [FromBody] DevSignInRequestDto request,
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<AuthResponseDto>> Register(
+        [FromBody] RegisterRequestDto request,
         CancellationToken cancellationToken)
     {
-        // Restricts the endpoint to Development only.
-        if (!_environment.IsDevelopment())
+        try
         {
-            return NotFound();
+            AuthResponseDto response =
+                await _authService.RegisterLocalAsync(request, cancellationToken);
+
+            await IssueAuthCookieAsync(response);
+
+            return Ok(response);
         }
-
-        AuthResponseDto response =
-            await _authService.SignInForDevelopmentAsync(request, cancellationToken);
-
-        // Builds claims for the authenticated application user.
-        var claims = new List<Claim>
+        catch (InvalidOperationException exception)
         {
-            new(AuthConstants.UserIdClaimType, response.UserId),
-            new(ClaimTypes.NameIdentifier, response.UserId),
-            new(ClaimTypes.Name, response.DisplayName),
-            new("auth_provider", response.AuthProvider)
-        };
-
-        // Creates the claims identity and principal used by cookie authentication.
-        var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
-        var principal = new ClaimsPrincipal(identity);
-
-        // Issues the real authentication cookie through ASP.NET Core auth middleware.
-        await HttpContext.SignInAsync(
-            AuthConstants.AuthScheme,
-            principal,
-            new AuthenticationProperties
-            {
-                IsPersistent = true,
-                AllowRefresh = true,
-                IssuedUtc = DateTimeOffset.UtcNow
-            });
-
-        return Ok(response);
+            return BadRequest(new { message = exception.Message });
+        }
     }
 
-    /// Returns the current persisted user based on the authenticated claims principal.
+    /// Signs an existing local account in.
+    /// Route: POST /api/auth/sign-in
+    /// <returns>Authenticated session response.</returns>
+    [HttpPost("sign-in")]
+    [ProducesResponseType(typeof(AuthResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<AuthResponseDto>> SignIn(
+        [FromBody] SignInRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            AuthResponseDto response =
+                await _authService.SignInLocalAsync(request, cancellationToken);
+
+            await IssueAuthCookieAsync(response);
+
+            return Ok(response);
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return Unauthorized(new { message = exception.Message });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    /// Returns the current authenticated user and tenant context.
     /// Route: GET /api/auth/me
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The current user response.</returns>
+    /// <returns>Current user payload.</returns>
     [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
     [HttpGet("me")]
     [ProducesResponseType(typeof(CurrentUserResponseDto), StatusCodes.Status200OK)]
@@ -87,18 +87,20 @@ public sealed class AuthController : ControllerBase
     public async Task<ActionResult<CurrentUserResponseDto>> Me(
         CancellationToken cancellationToken)
     {
-        // Reads the application user identifier from authenticated claims.
         string? currentUserId = User.FindFirstValue(AuthConstants.UserIdClaimType);
+        string? currentTenantId = User.FindFirstValue(AuthConstants.TenantIdClaimType);
 
         CurrentUserResponseDto response =
-            await _authService.GetCurrentUserAsync(currentUserId, cancellationToken);
+            await _authService.GetCurrentUserAsync(
+                currentUserId,
+                currentTenantId,
+                cancellationToken);
 
         return Ok(response);
     }
 
-    /// Signs the current user out by clearing the auth cookie.
+    /// Clears the current auth cookie.
     /// Route: POST /api/auth/sign-out
-    /// <returns>No content when sign-out succeeds.</returns>
     [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
     [HttpPost("sign-out")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -109,10 +111,6 @@ public sealed class AuthController : ControllerBase
     }
 
     /// Placeholder Apple sign-in endpoint.
-    /// Route: POST /api/auth/apple
-    /// <param name="request">The Apple sign-in payload.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The Apple sign-in response.</returns>
     [HttpPost("apple")]
     [ProducesResponseType(typeof(AuthResponseDto), StatusCodes.Status200OK)]
     public async Task<ActionResult<AuthResponseDto>> AppleSignIn(
@@ -122,6 +120,36 @@ public sealed class AuthController : ControllerBase
         AuthResponseDto response =
             await _authService.SignInWithAppleAsync(request, cancellationToken);
 
+        await IssueAuthCookieAsync(response);
+
         return Ok(response);
+    }
+
+    /// Issues the application auth cookie using the supplied session context.
+    /// <param name="response">Authenticated session payload.</param>
+    private async Task IssueAuthCookieAsync(AuthResponseDto response)
+    {
+        var claims = new List<Claim>
+        {
+            new(AuthConstants.UserIdClaimType, response.UserId),
+            new(AuthConstants.TenantIdClaimType, response.TenantId),
+            new(AuthConstants.TenantRoleClaimType, response.TenantRole),
+            new(ClaimTypes.NameIdentifier, response.UserId),
+            new(ClaimTypes.Name, response.DisplayName),
+            new("auth_provider", response.AuthProvider)
+        };
+
+        var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
+        var principal = new ClaimsPrincipal(identity);
+
+        await HttpContext.SignInAsync(
+            AuthConstants.AuthScheme,
+            principal,
+            new AuthenticationProperties
+            {
+                IsPersistent = true,
+                AllowRefresh = true,
+                IssuedUtc = DateTimeOffset.UtcNow
+            });
     }
 }

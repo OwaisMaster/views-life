@@ -1,112 +1,212 @@
 using FluentAssertions;
-using Moq;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using ViewsLife.Api.Domains.Auth.Dtos;
 using ViewsLife.Api.Domains.Auth.Entities;
-using ViewsLife.Api.Domains.Auth.Interfaces;
 using ViewsLife.Api.Domains.Auth.Services;
+using ViewsLife.Api.Infrastructure.Persistence;
 using Xunit;
 
 namespace ViewsLife.Api.UnitTests.Auth;
 
-/// Unit tests for AuthService business logic.
-/// These tests verify service behavior in isolation by mocking the repository.
+/// Unit-style tests for AuthService using an isolated SQLite in-memory database.
+///
+/// Context:
+/// - The service now depends directly on ApplicationDbContext.
+/// - SQLite in-memory provides relational behavior without relying on the dev database.
 public sealed class AuthServiceTests
 {
     [Fact]
-    public async Task SignInForDevelopmentAsync_ShouldCreateUser_WhenUserDoesNotExist()
+    public async Task RegisterLocalAsync_ShouldCreateUserTenantAndOwnerMembership()
     {
-        // Arranges a mock repository that returns no existing user.
-        var repositoryMock = new Mock<IUserRepository>();
+        // Creates an isolated relational test database for this test case.
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
 
-        repositoryMock
-            .Setup(repo => repo.GetByProviderAsync("Local", "local-001", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ApplicationUser?)null);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(connection)
+            .Options;
 
-        var service = new AuthService(repositoryMock.Object);
+        await using var dbContext = new ApplicationDbContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
 
-        var request = new DevSignInRequestDto
+        var service = new AuthService(dbContext);
+
+        var request = new RegisterRequestDto
         {
             DisplayName = "Test User",
             Email = "test@example.com",
-            AuthProvider = "Local",
-            ProviderSubjectId = "local-001"
+            Password = "Password!123",
+            TenantName = "Test Space"
         };
 
-        // Executes the development sign-in operation.
-        var response = await service.SignInForDevelopmentAsync(request);
+        // Executes the registration + tenant bootstrap flow.
+        AuthResponseDto response = await service.RegisterLocalAsync(request);
 
-        // Verifies a new user was created and persisted.
+        // Verifies the returned authenticated session context.
+        response.IsAuthenticated.Should().BeTrue();
         response.DisplayName.Should().Be("Test User");
+        response.AuthProvider.Should().Be("Local");
+        response.TenantName.Should().Be("Test Space");
+        response.TenantSlug.Should().Be("test-space");
+        response.TenantRole.Should().Be("Owner");
         response.UserId.Should().NotBeNullOrWhiteSpace();
+        response.TenantId.Should().NotBeNullOrWhiteSpace();
 
-        repositoryMock.Verify(
-            repo => repo.AddAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+        // Verifies user persistence.
+        ApplicationUser? persistedUser = await dbContext.Users
+            .FirstOrDefaultAsync(user => user.Id == response.UserId);
 
-        repositoryMock.Verify(
-            repo => repo.SaveChangesAsync(It.IsAny<CancellationToken>()),
-            Times.Once);
+        persistedUser.Should().NotBeNull();
+        persistedUser!.Email.Should().Be("test@example.com");
+        persistedUser.NormalizedEmail.Should().Be("TEST@EXAMPLE.COM");
+        persistedUser.PasswordHash.Should().NotBeNullOrWhiteSpace();
+
+        // Verifies tenant persistence.
+        Tenant? persistedTenant = await dbContext.Tenants
+            .FirstOrDefaultAsync(tenant => tenant.Id == response.TenantId);
+
+        persistedTenant.Should().NotBeNull();
+        persistedTenant!.Name.Should().Be("Test Space");
+        persistedTenant.Slug.Should().Be("test-space");
+        persistedTenant.OwnerUserId.Should().Be(response.UserId);
+
+        // Verifies owner membership creation.
+        TenantMembership? membership = await dbContext.TenantMemberships
+            .FirstOrDefaultAsync(entity =>
+                entity.UserId == response.UserId &&
+                entity.TenantId == response.TenantId);
+
+        membership.Should().NotBeNull();
+        membership!.Role.Should().Be("Owner");
     }
 
     [Fact]
-    public async Task SignInForDevelopmentAsync_ShouldReuseExistingUser_WhenUserExists()
+    public async Task RegisterLocalAsync_ShouldThrow_WhenEmailAlreadyExists()
     {
-        // Arranges a mock repository with an existing user.
-        var existingUser = new ApplicationUser
+        // Creates an isolated relational test database for this test case.
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var dbContext = new ApplicationDbContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var service = new AuthService(dbContext);
+
+        var firstRequest = new RegisterRequestDto
         {
-            Id = "existing-user-id",
-            DisplayName = "Existing User",
-            Email = "existing@example.com",
-            AuthProvider = "Local",
-            ProviderSubjectId = "local-001",
-            IsActive = true
+            DisplayName = "First User",
+            Email = "duplicate@example.com",
+            Password = "Password!123",
+            TenantName = "First Space"
         };
 
-        var repositoryMock = new Mock<IUserRepository>();
-
-        repositoryMock
-            .Setup(repo => repo.GetByProviderAsync("Local", "local-001", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingUser);
-
-        var service = new AuthService(repositoryMock.Object);
-
-        var request = new DevSignInRequestDto
+        var secondRequest = new RegisterRequestDto
         {
-            DisplayName = "Ignored Name",
-            Email = "ignored@example.com",
-            AuthProvider = "Local",
-            ProviderSubjectId = "local-001"
+            DisplayName = "Second User",
+            Email = "duplicate@example.com",
+            Password = "Password!123",
+            TenantName = "Second Space"
         };
 
-        // Executes the development sign-in operation.
-        var response = await service.SignInForDevelopmentAsync(request);
+        // Creates the first user successfully.
+        await service.RegisterLocalAsync(firstRequest);
 
-        // Verifies the existing user was reused and not recreated.
-        response.UserId.Should().Be("existing-user-id");
-        response.DisplayName.Should().Be("Existing User");
+        // Verifies the second registration with the same email is rejected.
+        Func<Task> action = async () => await service.RegisterLocalAsync(secondRequest);
 
-        repositoryMock.Verify(
-            repo => repo.AddAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-
-        repositoryMock.Verify(
-            repo => repo.SaveChangesAsync(It.IsAny<CancellationToken>()),
-            Times.Never);
+        await action.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("An account with that email already exists.");
     }
 
     [Fact]
-    public async Task GetCurrentUserAsync_ShouldReturnUnauthenticated_WhenUserIdIsMissing()
+    public async Task SignInLocalAsync_ShouldReturnTenantContext_WhenPasswordValid()
     {
-        // Arranges a service with a mocked repository.
-        var repositoryMock = new Mock<IUserRepository>();
-        var service = new AuthService(repositoryMock.Object);
+        // Creates an isolated relational test database for this test case.
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
 
-        // Executes the current-user lookup with no user id.
-        var response = await service.GetCurrentUserAsync(null);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(connection)
+            .Options;
 
-        // Verifies unauthenticated state is returned.
-        response.IsAuthenticated.Should().BeFalse();
-        response.UserId.Should().BeEmpty();
-        response.DisplayName.Should().BeEmpty();
+        await using var dbContext = new ApplicationDbContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var service = new AuthService(dbContext);
+
+        var registrationRequest = new RegisterRequestDto
+        {
+            DisplayName = "Sign In User",
+            Email = "signin@example.com",
+            Password = "Password!123",
+            TenantName = "Sign In Space"
+        };
+
+        // Registers the account so sign-in can be verified independently.
+        await service.RegisterLocalAsync(registrationRequest);
+
+        var signInRequest = new SignInRequestDto
+        {
+            Email = "signin@example.com",
+            Password = "Password!123"
+        };
+
+        // Executes sign-in.
+        AuthResponseDto response = await service.SignInLocalAsync(signInRequest);
+
+        // Verifies the full tenant-aware session payload.
+        response.IsAuthenticated.Should().BeTrue();
+        response.DisplayName.Should().Be("Sign In User");
+        response.AuthProvider.Should().Be("Local");
+        response.TenantName.Should().Be("Sign In Space");
+        response.TenantSlug.Should().Be("sign-in-space");
+        response.TenantRole.Should().Be("Owner");
+    }
+
+    [Fact]
+    public async Task SignInLocalAsync_ShouldThrow_WhenPasswordInvalid()
+    {
+        // Creates an isolated relational test database for this test case.
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var dbContext = new ApplicationDbContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var service = new AuthService(dbContext);
+
+        var registrationRequest = new RegisterRequestDto
+        {
+            DisplayName = "Bad Password User",
+            Email = "badpassword@example.com",
+            Password = "Password!123",
+            TenantName = "Bad Password Space"
+        };
+
+        // Registers the account first.
+        await service.RegisterLocalAsync(registrationRequest);
+
+        var signInRequest = new SignInRequestDto
+        {
+            Email = "badpassword@example.com",
+            Password = "WrongPassword!123"
+        };
+
+        // Verifies invalid credentials are rejected.
+        Func<Task> action = async () => await service.SignInLocalAsync(signInRequest);
+
+        await action.Should()
+            .ThrowAsync<UnauthorizedAccessException>()
+            .WithMessage("Invalid email or password.");
     }
 }

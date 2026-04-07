@@ -3,14 +3,18 @@ namespace ViewsLife.Api.Common.Constants;
 /// Stores authentication-related constants used across the API.
 public static class AuthConstants
 {
-    /// The ASP.NET Core authentication scheme name used for the application's
-    /// cookie-based authentication flow.
+    /// Cookie authentication scheme name.
     public const string AuthScheme = "ViewsLifeCookieAuth";
 
-    /// The cookie name used by the application's authentication middleware.
+    /// Auth cookie name.
     public const string AuthCookieName = "viewslife_auth";
 
-    /// Custom claim type used to store the application user identifier.
-    /// This is distinct from provider-specific identifiers.
+    /// Claim type for application user identifier.
     public const string UserIdClaimType = "viewslife_user_id";
+
+    /// Claim type for current tenant identifier.
+    public const string TenantIdClaimType = "viewslife_tenant_id";
+
+    /// Claim type for current tenant role.
+    public const string TenantRoleClaimType = "viewslife_tenant_role";
 }

@@ -1,14 +1,10 @@
 import { NextResponse } from "next/server";
 
 /**
- * Appends the backend Set-Cookie header directly to the outgoing Next.js response.
- *
- * Context:
- * - This preserves the cookie exactly as the ASP.NET backend emitted it.
- * - That is safer than reconstructing the cookie manually for auth flows.
+ * Forwards the backend Set-Cookie header directly to the browser response.
  *
  * @param response Outgoing Next.js response
- * @param setCookieHeader Raw Set-Cookie header from the backend response
+ * @param setCookieHeader Raw Set-Cookie header from backend
  */
 export function appendBackendSetCookieHeader(
   response: NextResponse,

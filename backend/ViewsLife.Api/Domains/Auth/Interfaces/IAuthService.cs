@@ -5,27 +5,26 @@ namespace ViewsLife.Api.Domains.Auth.Interfaces;
 /// Defines authentication-related application operations.
 public interface IAuthService
 {
-    /// Temporary development sign-in that finds or creates a user row.
-    /// <param name="request">The development sign-in payload.</param>
-    /// <param name="cancellationToken">Cancellation token for async operations.</param>
-    /// <returns>The authenticated user response.</returns>
-    Task<AuthResponseDto> SignInForDevelopmentAsync(
-        DevSignInRequestDto request,
+    /// Registers a new local account and bootstraps its tenant.
+    /// <returns>Authenticated session response for the new user.</returns>
+    Task<AuthResponseDto> RegisterLocalAsync(
+        RegisterRequestDto request,
         CancellationToken cancellationToken = default);
 
-    /// Returns the current user for the given application user identifier.
-    /// <param name="userId">The application user identifier.</param>
-    /// <param name="cancellationToken">Cancellation token for async operations.</param>
-    /// <returns>The current-user response if found; otherwise unauthenticated response.</returns>
+    /// Signs a local account in using email and password.
+    /// <returns>Authenticated session response.</returns>
+    Task<AuthResponseDto> SignInLocalAsync(
+        SignInRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    /// Loads the current authenticated user and tenant context.
+    /// <returns>Current-user bootstrap response.</returns>
     Task<CurrentUserResponseDto> GetCurrentUserAsync(
         string? userId,
+        string? tenantId,
         CancellationToken cancellationToken = default);
 
-    /// Validates an Apple sign-in identity token and signs the user in.
-    /// This will replace the development path as the real provider flow.
-    /// <param name="request">The Apple sign-in payload.</param>
-    /// <param name="cancellationToken">Cancellation token for async operations.</param>
-    /// <returns>The authentication response.</returns>
+    /// Placeholder for future Apple Sign-In flow.
     Task<AuthResponseDto> SignInWithAppleAsync(
         AppleSignInRequestDto request,
         CancellationToken cancellationToken = default);

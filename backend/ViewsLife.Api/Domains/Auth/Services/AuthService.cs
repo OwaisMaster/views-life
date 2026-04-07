@@ -1,53 +1,150 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using ViewsLife.Api.Domains.Auth.Dtos;
 using ViewsLife.Api.Domains.Auth.Entities;
 using ViewsLife.Api.Domains.Auth.Interfaces;
+using ViewsLife.Api.Infrastructure.Persistence;
 
 namespace ViewsLife.Api.Domains.Auth.Services;
 
-/// Auth application service for development and future provider-backed sign-in flows.
+/// Auth application service for local registration/sign-in and future provider flows.
+/// Context:
+/// - This slice formalizes the user + tenant bootstrap model.
+/// - New registrations create:
+///   1. user
+///   2. tenant
+///   3. owner membership
+/// - Sign-in returns the persisted user + tenant context used to issue auth claims.
 public sealed class AuthService : IAuthService
 {
-    private readonly IUserRepository _userRepository;
+    private readonly ApplicationDbContext _dbContext;
+    private readonly PasswordHasher<ApplicationUser> _passwordHasher = new();
 
     /// Creates a new auth service instance.
-    /// <param name="userRepository">Repository used for user persistence operations.</param>
-    public AuthService(IUserRepository userRepository)
+    public AuthService(ApplicationDbContext dbContext)
     {
-        _userRepository = userRepository;
+        _dbContext = dbContext;
     }
 
-    public async Task<AuthResponseDto> SignInForDevelopmentAsync(
-        DevSignInRequestDto request,
+    public async Task<AuthResponseDto> RegisterLocalAsync(
+        RegisterRequestDto request,
         CancellationToken cancellationToken = default)
     {
-        // Attempts to find an existing user first based on provider identity.
-        ApplicationUser? existingUser = await _userRepository.GetByProviderAsync(
-            request.AuthProvider,
-            request.ProviderSubjectId,
+        string normalizedEmail = NormalizeEmail(request.Email);
+
+        bool emailAlreadyExists = await _dbContext.Users
+            .AnyAsync(
+                user => user.NormalizedEmail == normalizedEmail,
+                cancellationToken);
+
+        if (emailAlreadyExists)
+        {
+            throw new InvalidOperationException("An account with that email already exists.");
+        }
+
+        string tenantSlug = await GenerateUniqueTenantSlugAsync(
+            request.TenantName,
             cancellationToken);
 
-        ApplicationUser user;
-
-        if (existingUser is not null)
+        var user = new ApplicationUser
         {
-            user = existingUser;
+            DisplayName = request.DisplayName.Trim(),
+            Email = request.Email.Trim(),
+            NormalizedEmail = normalizedEmail,
+            AuthProvider = "Local",
+            ProviderSubjectId = normalizedEmail,
+            IsEmailVerified = true,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
+
+        var tenant = new Tenant
+        {
+            Name = request.TenantName.Trim(),
+            Slug = tenantSlug,
+            OwnerUserId = user.Id,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        var membership = new TenantMembership
+        {
+            TenantId = tenant.Id,
+            UserId = user.Id,
+            Role = "Owner",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        // Wraps bootstrap creation in a single transaction so the model cannot
+        // end up with a user but no tenant, or a tenant but no owner membership.
+        await using var transaction =
+            await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        _dbContext.Users.Add(user);
+        _dbContext.Tenants.Add(tenant);
+        _dbContext.TenantMemberships.Add(membership);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return new AuthResponseDto
+        {
+            UserId = user.Id,
+            DisplayName = user.DisplayName,
+            IsAuthenticated = true,
+            AuthProvider = user.AuthProvider,
+            TenantId = tenant.Id,
+            TenantName = tenant.Name,
+            TenantSlug = tenant.Slug,
+            TenantRole = membership.Role
+        };
+    }
+
+    public async Task<AuthResponseDto> SignInLocalAsync(
+        SignInRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedEmail = NormalizeEmail(request.Email);
+
+        ApplicationUser? user = await _dbContext.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                entity => entity.NormalizedEmail == normalizedEmail &&
+                          entity.AuthProvider == "Local",
+                cancellationToken);
+
+        if (user is null || string.IsNullOrWhiteSpace(user.PasswordHash) || !user.IsActive)
+        {
+            throw new UnauthorizedAccessException("Invalid email or password.");
         }
-        else
-        {
-            // Creates a new persisted user when one does not already exist.
-            user = new ApplicationUser
-            {
-                DisplayName = request.DisplayName,
-                Email = request.Email,
-                AuthProvider = request.AuthProvider,
-                ProviderSubjectId = request.ProviderSubjectId,
-                IsActive = true,
-                CreatedAtUtc = DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
-            };
 
-            await _userRepository.AddAsync(user, cancellationToken);
-            await _userRepository.SaveChangesAsync(cancellationToken);
+        PasswordVerificationResult passwordResult =
+            _passwordHasher.VerifyHashedPassword(
+                user,
+                user.PasswordHash,
+                request.Password);
+
+        if (passwordResult == PasswordVerificationResult.Failed)
+        {
+            throw new UnauthorizedAccessException("Invalid email or password.");
+        }
+
+        var tenantContext = await _dbContext.TenantMemberships
+            .AsNoTracking()
+            .Include(membership => membership.Tenant)
+            .FirstOrDefaultAsync(
+                membership => membership.UserId == user.Id &&
+                              membership.Tenant != null &&
+                              membership.Tenant.IsActive,
+                cancellationToken);
+
+        if (tenantContext is null || tenantContext.Tenant is null)
+        {
+            throw new InvalidOperationException("The user does not have an active tenant.");
         }
 
         return new AuthResponseDto
@@ -55,43 +152,68 @@ public sealed class AuthService : IAuthService
             UserId = user.Id,
             DisplayName = user.DisplayName,
             IsAuthenticated = true,
-            AuthProvider = user.AuthProvider
+            AuthProvider = user.AuthProvider,
+            TenantId = tenantContext.Tenant.Id,
+            TenantName = tenantContext.Tenant.Name,
+            TenantSlug = tenantContext.Tenant.Slug,
+            TenantRole = tenantContext.Role
         };
     }
 
     public async Task<CurrentUserResponseDto> GetCurrentUserAsync(
         string? userId,
+        string? tenantId,
         CancellationToken cancellationToken = default)
     {
-        // Returns an unauthenticated result if no user id is present in claims.
-        if (string.IsNullOrWhiteSpace(userId))
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(tenantId))
         {
             return new CurrentUserResponseDto
             {
                 UserId = string.Empty,
                 DisplayName = string.Empty,
-                IsAuthenticated = false
+                IsAuthenticated = false,
+                TenantId = string.Empty,
+                TenantName = string.Empty,
+                TenantSlug = string.Empty,
+                TenantRole = string.Empty
             };
         }
 
-        // Loads the current user from the database.
-        ApplicationUser? user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        var membership = await _dbContext.TenantMemberships
+            .AsNoTracking()
+            .Include(entity => entity.User)
+            .Include(entity => entity.Tenant)
+            .FirstOrDefaultAsync(
+                entity => entity.UserId == userId &&
+                          entity.TenantId == tenantId,
+                cancellationToken);
 
-        if (user is null || !user.IsActive)
+        if (membership?.User is null ||
+            membership.Tenant is null ||
+            !membership.User.IsActive ||
+            !membership.Tenant.IsActive)
         {
             return new CurrentUserResponseDto
             {
                 UserId = string.Empty,
                 DisplayName = string.Empty,
-                IsAuthenticated = false
+                IsAuthenticated = false,
+                TenantId = string.Empty,
+                TenantName = string.Empty,
+                TenantSlug = string.Empty,
+                TenantRole = string.Empty
             };
         }
 
         return new CurrentUserResponseDto
         {
-            UserId = user.Id,
-            DisplayName = user.DisplayName,
-            IsAuthenticated = true
+            UserId = membership.User.Id,
+            DisplayName = membership.User.DisplayName,
+            IsAuthenticated = true,
+            TenantId = membership.Tenant.Id,
+            TenantName = membership.Tenant.Name,
+            TenantSlug = membership.Tenant.Slug,
+            TenantRole = membership.Role
         };
     }
 
@@ -100,5 +222,52 @@ public sealed class AuthService : IAuthService
         CancellationToken cancellationToken = default)
     {
         throw new NotImplementedException("Apple sign-in validation has not been implemented yet.");
+    }
+
+    /// Normalizes an email for case-insensitive lookup.
+    private static string NormalizeEmail(string email)
+    {
+        return email.Trim().ToUpperInvariant();
+    }
+
+    /// Generates a unique tenant slug from a requested tenant name.
+    private async Task<string> GenerateUniqueTenantSlugAsync(
+        string tenantName,
+        CancellationToken cancellationToken)
+    {
+        string baseSlug = Slugify(tenantName);
+        string slug = baseSlug;
+        int suffix = 1;
+
+        while (await _dbContext.Tenants.AnyAsync(
+                   tenant => tenant.Slug == slug,
+                   cancellationToken))
+        {
+            suffix++;
+            slug = $"{baseSlug}-{suffix}";
+        }
+
+        return slug;
+    }
+
+    /// Converts free-form tenant names into URL-safe slugs.
+    /// <returns>Slugified value.</returns>
+    private static string Slugify(string value)
+    {
+        string trimmed = value.Trim().ToLowerInvariant();
+
+        var chars = trimmed
+            .Select(character =>
+                char.IsLetterOrDigit(character) ? character : '-')
+            .ToArray();
+
+        string collapsed = new string(chars);
+
+        while (collapsed.Contains("--", StringComparison.Ordinal))
+        {
+            collapsed = collapsed.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return collapsed.Trim('-');
     }
 }

@@ -1,6 +1,6 @@
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import DevAuthPanel from "@/components/auth/DevAuthPanel";
 import { fetchHealth, type HealthResponse } from "@/lib/health";
 import { fetchCurrentUser, type CurrentUserResponse } from "@/lib/auth";
 
@@ -20,11 +20,10 @@ async function getSafeResult<T>(
       error: null,
     };
   } catch (requestError) {
-    let message = "Unknown request error.";
-
-    if (requestError instanceof Error) {
-      message = `${requestError.name}: ${requestError.message}`;
-    }
+    const message =
+      requestError instanceof Error
+        ? `${requestError.name}: ${requestError.message}`
+        : "Unknown request error.";
 
     return {
       data: null,
@@ -33,6 +32,13 @@ async function getSafeResult<T>(
   }
 }
 
+/**
+ * Public homepage.
+ *
+ * Context:
+ * - Shows the polished entry points for account creation and sign-in.
+ * - Redirects authenticated users into the protected dashboard.
+ */
 export default async function Home() {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore.toString();
@@ -48,24 +54,48 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen px-6 py-12">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <header className="space-y-2">
-          <h1 className="text-3xl font-bold">ViewsLife</h1>
-          <p className="text-sm text-gray-600">
-            Public entry point and development auth check
-          </p>
+      <div className="mx-auto max-w-4xl space-y-10">
+        <header className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-gray-600">ViewsLife</p>
+            <h1 className="text-4xl font-bold tracking-tight">
+              Archive your thoughts into an explorable space
+            </h1>
+            <p className="max-w-2xl text-sm text-gray-600">
+              Create your account, bootstrap your personal note space, and begin
+              building the foundation for your archive.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/register"
+              className="rounded-md border px-4 py-2 text-sm font-medium"
+            >
+              Create account
+            </Link>
+
+            <Link
+              href="/sign-in"
+              className="rounded-md border px-4 py-2 text-sm font-medium"
+            >
+              Sign in
+            </Link>
+          </div>
         </header>
 
-        <section className="rounded-xl border p-4">
-          <h2 className="mb-2 text-lg font-semibold">Frontend Configuration</h2>
-          <p className="text-sm">
-            Backend API Base URL:{" "}
-            {process.env.NEXT_PUBLIC_API_BASE_URL ?? "Not set"}
-          </p>
+        <section className="rounded-xl border p-6">
+          <h2 className="mb-3 text-lg font-semibold">What happens next</h2>
+          <div className="space-y-2 text-sm text-gray-700">
+            <p>1. You create an account.</p>
+            <p>2. Your personal tenant space is created automatically.</p>
+            <p>3. You are signed in and redirected to your dashboard.</p>
+            <p>4. Future notes, collections, and collaboration features attach to that tenant.</p>
+          </div>
         </section>
 
-        <section className="rounded-xl border p-4">
-          <h2 className="mb-2 text-lg font-semibold">Backend Health Check</h2>
+        <section className="rounded-xl border p-6">
+          <h2 className="mb-3 text-lg font-semibold">Backend Health Check</h2>
 
           {healthResult.data ? (
             <div className="space-y-2 text-sm">
@@ -92,38 +122,6 @@ export default async function Home() {
               </p>
               <p>
                 <strong>Error:</strong> {healthResult.error ?? "Unknown error"}
-              </p>
-            </div>
-          )}
-        </section>
-
-        <DevAuthPanel />
-
-        <section className="rounded-xl border p-4">
-          <h2 className="mb-2 text-lg font-semibold">Current User</h2>
-
-          {currentUserResult.data ? (
-            <div className="space-y-2 text-sm">
-              <p>
-                <strong>User ID:</strong> {currentUserResult.data.userId}
-              </p>
-              <p>
-                <strong>Display Name:</strong>{" "}
-                {currentUserResult.data.displayName}
-              </p>
-              <p>
-                <strong>Is Authenticated:</strong>{" "}
-                {currentUserResult.data.isAuthenticated ? "true" : "false"}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2 text-sm">
-              <p>
-                <strong>Request:</strong> Failed
-              </p>
-              <p>
-                <strong>Error:</strong>{" "}
-                {currentUserResult.error ?? "Unknown error"}
               </p>
             </div>
           )}

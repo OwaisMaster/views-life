@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildBackendApiUrl } from "@/lib/api";
 
-console.log(
-  "NODE_EXTRA_CA_CERTS in route handler:",
-  process.env.NODE_EXTRA_CA_CERTS
-);
 /**
  * Frontend BFF health route.
  * Forwards health requests to the ASP.NET backend.
