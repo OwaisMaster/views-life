@@ -6,7 +6,7 @@
     "dev": "cross-env NODE_EXTRA_CA_CERTS=[REDACTED_LOCAL_MKCERT_PATH] next dev --experimental-https",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "next": "16.2.2",
@@ -19,8 +19,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "cross-env": "^10.1.0",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.2",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
