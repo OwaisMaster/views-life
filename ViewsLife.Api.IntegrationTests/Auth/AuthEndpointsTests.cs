@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -8,13 +7,14 @@ using Xunit;
 
 namespace ViewsLife.Api.IntegrationTests.Auth;
 
+/// <summary>
 /// Integration tests for local account registration, sign-in, and session bootstrap.
 ///
 /// Context:
 /// - Uses the full API host through WebApplicationFactory.
 /// - Verifies user + tenant bootstrap through real HTTP flows.
-/// - Uses explicit cookie forwarding for the /api/auth/me bootstrap test so the
-///   test remains deterministic in CI environments.
+/// - Relies on automatic cookie round-tripping through the configured test host.
+/// </summary>
 public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;
@@ -24,7 +24,11 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
         _factory = factory;
     }
 
-    /// Creates a fresh HTTPS client with cookie handling enabled.
+    /// <summary>
+    /// Creates a fresh test client with cookie handling enabled.
+    /// In the Testing environment, the auth cookie policy is adjusted so
+    /// automatic round-tripping works reliably.
+    /// </summary>
     private HttpClient CreateClient()
     {
         return _factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -33,19 +37,6 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             HandleCookies = true,
             BaseAddress = new Uri("https://localhost")
         });
-    }
-
-    /// Extracts the first cookie pair from a Set-Cookie header.
-    ///
-    /// Example:
-    /// "viewslife_auth=abc123; expires=...; path=/; secure; httponly"
-    /// becomes:
-    /// "viewslife_auth=abc123"
-    /// <param name="setCookieHeader">Raw Set-Cookie header value.</param>
-    /// <returns>The cookie pair suitable for a Cookie request header.</returns>
-    private static string ExtractCookiePair(string setCookieHeader)
-    {
-        return setCookieHeader.Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
     }
 
     [Fact]
@@ -162,7 +153,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
     [Fact]
     public async Task Me_ShouldReturnTenantContext_WhenAuthenticated()
     {
-        using HttpClient registerClient = CreateClient();
+        using HttpClient client = CreateClient();
 
         var request = new RegisterRequestDto
         {
@@ -172,31 +163,14 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             TenantName = "Bootstrap Space"
         };
 
-        // Registers and authenticates the user.
-        HttpResponseMessage registerResponse = await registerClient.PostAsJsonAsync(
+        HttpResponseMessage registerResponse = await client.PostAsJsonAsync(
             "/api/auth/register",
             request);
 
         registerResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        registerResponse.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? cookieHeaders)
-            .Should().BeTrue();
-
-        cookieHeaders.Should().NotBeNull();
-
-        string authCookieHeader = cookieHeaders!
-            .First(header => header.Contains("viewslife_auth"));
-
-        string cookiePair = ExtractCookiePair(authCookieHeader);
-
-        // Uses a fresh client and forwards the cookie explicitly.
-        // This avoids CI-specific flakiness around secure cookie container round-tripping.
-        using HttpClient meClient = CreateClient();
-
-        var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        meRequest.Headers.Add("Cookie", cookiePair);
-
-        HttpResponseMessage meResponse = await meClient.SendAsync(meRequest);
+        // Uses the same client so the auth cookie is automatically round-tripped.
+        HttpResponseMessage meResponse = await client.GetAsync("/api/auth/me");
 
         meResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
