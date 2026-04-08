@@ -29,11 +29,14 @@ frontend/.env.production.local
 
 # Certificates and local secrets
 frontend/certs/
+frontend/certificates
 frontend/*.pem
 frontend/*.key
 frontend/*.crt
 frontend/*.p12
 frontend/*.pfx
+frontend/*.crt
+frontend/*.cer
 
 # --- .NET / ASP.NET ---
 **/bin/
@@ -58,6 +61,8 @@ backend/*.key
 backend/*.crt
 backend/*.p12
 backend/*.pfx
+backend/*.crt
+backend/*.cer
 
 # EF / generated artifacts if any custom local outputs appear
 *.db
