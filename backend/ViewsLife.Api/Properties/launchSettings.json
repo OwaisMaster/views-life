@@ -27,8 +27,8 @@
       "applicationUrl": "https://localhost:7235;http://localhost:5230",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_Kestrel__Certificates__Default__Path": "[REDACTED_P12_PATH]",
-        "ASPNETCORE_Kestrel__Certificates__Default__Password": "[REDACTED_CERT_PASSWORD]"
+        "ASPNETCORE_Kestrel__Certificates__Default__Path": "",
+        "ASPNETCORE_Kestrel__Certificates__Default__Password": ""
       }
     },
     "IIS Express": {
