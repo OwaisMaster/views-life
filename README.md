@@ -27,4 +27,4 @@ dotnet run
 
 ### Infra
 docker compose -f docker-compose.postgres.yml up -d
-docker compose -f docker-compose.postgres.yml down
+docker compose -f docker-compose.postgres.yml down 
