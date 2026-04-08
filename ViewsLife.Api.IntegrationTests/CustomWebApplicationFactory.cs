@@ -1,34 +1,33 @@
 using System.Data.Common;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
-using ViewsLife.Api.Common.Constants;
+using Microsoft.AspNetCore.DataProtection;
 using ViewsLife.Api.Infrastructure.Persistence;
 
 namespace ViewsLife.Api.IntegrationTests;
 
-/// Custom integration-test host that:
-/// - swaps PostgreSQL for SQLite in-memory
-/// - runs under a dedicated Testing environment
-/// - relaxes cookie security policy for the test host only so automatic cookie
-///   round-tripping works reliably with WebApplicationFactory
+/// <summary>
+/// Custom integration-test host that swaps PostgreSQL for SQLite in-memory
+/// and stabilizes Data Protection for auth-cookie round trips.
 ///
 /// Context:
-/// - This keeps production cookie settings strict.
-/// - It avoids test-only manual Cookie header injection for authenticated flows.
+/// - Cookie authentication uses ASP.NET Core Data Protection.
+/// - In CI, auth cookies can become unreadable between requests if the test host
+///   does not share a stable key ring.
+/// - Persisting keys to a temp directory for the test host lifetime makes auth
+///   behavior deterministic in GitHub Actions.
+/// </summary>
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     private DbConnection? _connection;
+    private string? _dataProtectionKeysDirectory;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Testing");
+        builder.UseEnvironment("Development");
 
         builder.ConfigureServices(services =>
         {
@@ -51,16 +50,18 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 options.UseSqlite(_connection);
             });
 
-            // Overrides cookie authentication options for the Testing environment only.
-            // This allows the test client to round-trip the auth cookie automatically.
-            services.PostConfigure<CookieAuthenticationOptions>(
-                AuthConstants.AuthScheme,
-                options =>
-                {
-                    options.Cookie.SecurePolicy = CookieSecurePolicy.None;
-                    options.Cookie.SameSite = SameSiteMode.Lax;
-                    options.Cookie.HttpOnly = true;
-                });
+            // Creates a stable Data Protection key directory for this factory instance.
+            _dataProtectionKeysDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "ViewsLife.IntegrationTests.DataProtectionKeys",
+                Guid.NewGuid().ToString("N"));
+
+            Directory.CreateDirectory(_dataProtectionKeysDirectory);
+
+            // Stabilizes cookie encryption/decryption across requests in the same test host.
+            services.AddDataProtection()
+                .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysDirectory))
+                .SetApplicationName("ViewsLife.IntegrationTests");
 
             // Builds the service provider and ensures the schema exists.
             var serviceProvider = services.BuildServiceProvider();
@@ -78,6 +79,19 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         if (disposing)
         {
             _connection?.Dispose();
+
+            if (!string.IsNullOrWhiteSpace(_dataProtectionKeysDirectory) &&
+                Directory.Exists(_dataProtectionKeysDirectory))
+            {
+                try
+                {
+                    Directory.Delete(_dataProtectionKeysDirectory, recursive: true);
+                }
+                catch
+                {
+                    // Swallows cleanup failures because they should not fail the test run.
+                }
+            }
         }
     }
 }
