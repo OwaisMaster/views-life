@@ -1,24 +1,23 @@
 using System.Data.Common;
+using System.IO;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.AspNetCore.DataProtection;
 using ViewsLife.Api.Infrastructure.Persistence;
 
 namespace ViewsLife.Api.IntegrationTests;
 
 /// <summary>
 /// Custom integration-test host that swaps PostgreSQL for SQLite in-memory
-/// and stabilizes Data Protection for auth-cookie round trips.
+/// and configures a deterministic Data Protection key ring for cookie auth.
 ///
 /// Context:
-/// - Cookie authentication uses ASP.NET Core Data Protection.
-/// - In CI, auth cookies can become unreadable between requests if the test host
-///   does not share a stable key ring.
-/// - Persisting keys to a temp directory for the test host lifetime makes auth
-///   behavior deterministic in GitHub Actions.
+/// - SQLite in-memory gives relational behavior without using the dev database.
+/// - Data Protection is explicitly configured so auth cookies issued in one
+///   request can be decrypted in later requests reliably in CI.
 /// </summary>
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
@@ -50,15 +49,14 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 options.UseSqlite(_connection);
             });
 
-            // Creates a stable Data Protection key directory for this factory instance.
+            // Creates a deterministic file-system-backed Data Protection key store
+            // so cookie auth can encrypt/decrypt consistently across requests.
             _dataProtectionKeysDirectory = Path.Combine(
                 Path.GetTempPath(),
-                "ViewsLife.IntegrationTests.DataProtectionKeys",
-                Guid.NewGuid().ToString("N"));
+                "ViewsLife.IntegrationTests.DataProtectionKeys");
 
             Directory.CreateDirectory(_dataProtectionKeysDirectory);
 
-            // Stabilizes cookie encryption/decryption across requests in the same test host.
             services.AddDataProtection()
                 .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysDirectory))
                 .SetApplicationName("ViewsLife.IntegrationTests");
@@ -79,19 +77,6 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         if (disposing)
         {
             _connection?.Dispose();
-
-            if (!string.IsNullOrWhiteSpace(_dataProtectionKeysDirectory) &&
-                Directory.Exists(_dataProtectionKeysDirectory))
-            {
-                try
-                {
-                    Directory.Delete(_dataProtectionKeysDirectory, recursive: true);
-                }
-                catch
-                {
-                    // Swallows cleanup failures because they should not fail the test run.
-                }
-            }
         }
     }
 }
