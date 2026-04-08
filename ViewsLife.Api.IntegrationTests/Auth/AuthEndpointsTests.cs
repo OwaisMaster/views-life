@@ -4,6 +4,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using ViewsLife.Api.Domains.Auth.Dtos;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace ViewsLife.Api.IntegrationTests.Auth;
 
@@ -12,22 +13,23 @@ namespace ViewsLife.Api.IntegrationTests.Auth;
 ///
 /// Context:
 /// - Uses the full API host through WebApplicationFactory.
-/// - Verifies user + tenant bootstrap through real HTTP flows.
-/// - Uses explicit cookie forwarding for the /api/auth/me bootstrap test so the
-///   test remains deterministic in CI environments.
+/// - Adds explicit diagnostics so cookie/auth failures in CI can be pinpointed.
 /// </summary>
 public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;
+    private readonly ITestOutputHelper _output;
 
-    public AuthEndpointsTests(CustomWebApplicationFactory factory)
+    public AuthEndpointsTests(
+        CustomWebApplicationFactory factory,
+        ITestOutputHelper output)
     {
         _factory = factory;
+        _output = output;
     }
 
     /// <summary>
     /// Creates an HTTPS client with automatic cookie handling enabled.
-    /// Use this for requests where the handler should manage cookies.
     /// </summary>
     private HttpClient CreateCookieClient()
     {
@@ -100,7 +102,13 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             .Should().BeTrue();
 
         cookieHeaders.Should().NotBeNull();
-        cookieHeaders!.Any(value => value.Contains("viewslife_auth"))
+
+        foreach (string header in cookieHeaders!)
+        {
+            _output.WriteLine($"Register Set-Cookie header: {header}");
+        }
+
+        cookieHeaders.Any(value => value.Contains("viewslife_auth"))
             .Should().BeTrue();
     }
 
@@ -175,7 +183,13 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             .Should().BeTrue();
 
         cookieHeaders.Should().NotBeNull();
-        cookieHeaders!.Any(value => value.Contains("viewslife_auth"))
+
+        foreach (string header in cookieHeaders!)
+        {
+            _output.WriteLine($"SignIn Set-Cookie header: {header}");
+        }
+
+        cookieHeaders.Any(value => value.Contains("viewslife_auth"))
             .Should().BeTrue();
     }
 
@@ -196,6 +210,11 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             "/api/auth/register",
             request);
 
+        _output.WriteLine($"Register response status: {registerResponse.StatusCode}");
+
+        string registerBody = await registerResponse.Content.ReadAsStringAsync();
+        _output.WriteLine($"Register response body: {registerBody}");
+
         registerResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
         registerResponse.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? cookieHeaders)
@@ -203,19 +222,33 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
 
         cookieHeaders.Should().NotBeNull();
 
-        string authCookieHeader = cookieHeaders!
+        var cookieHeaderList = cookieHeaders!.ToList();
+
+        foreach (string header in cookieHeaderList)
+        {
+            _output.WriteLine($"Register Set-Cookie header: {header}");
+        }
+
+        string authCookieHeader = cookieHeaderList
             .First(header => header.Contains("viewslife_auth"));
 
         string cookiePair = ExtractCookiePair(authCookieHeader);
 
-        // Use a client with HandleCookies disabled so the manually added Cookie
-        // header is not overridden or ignored by the handler.
+        _output.WriteLine($"Extracted auth cookie pair: {cookiePair}");
+
         using HttpClient meClient = CreateManualCookieClient();
 
         var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
         meRequest.Headers.Add("Cookie", cookiePair);
 
+        _output.WriteLine($"Outgoing /api/auth/me Cookie header: {cookiePair}");
+
         HttpResponseMessage meResponse = await meClient.SendAsync(meRequest);
+
+        _output.WriteLine($"Me response status: {meResponse.StatusCode}");
+
+        string meBody = await meResponse.Content.ReadAsStringAsync();
+        _output.WriteLine($"Me response body: {meBody}");
 
         meResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
