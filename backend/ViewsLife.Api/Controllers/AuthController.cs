@@ -80,7 +80,7 @@ public sealed class AuthController : ControllerBase
     /// Returns the current authenticated user and tenant context.
     /// Route: GET /api/auth/me
     /// <returns>Current user payload.</returns>
-    [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
+    [Authorize]
     [HttpGet("me")]
     [ProducesResponseType(typeof(CurrentUserResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

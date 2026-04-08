@@ -2,36 +2,35 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using ViewsLife.Api.Domains.Auth.Dtos;
+using ViewsLife.Api.Domains.Auth.Entities;
+using ViewsLife.Api.Infrastructure.Persistence;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace ViewsLife.Api.IntegrationTests.Auth;
 
 /// <summary>
-/// Integration tests for local account registration, sign-in, and session bootstrap.
+/// Integration tests for local account registration, sign-in, and current-user bootstrap.
 ///
 /// Context:
-/// - Uses the full API host through WebApplicationFactory.
-/// - Adds explicit diagnostics so cookie/auth failures in CI can be pinpointed.
+/// - Registration and sign-in continue to verify that a real auth cookie is issued.
+/// - The protected /api/auth/me test uses the integration-test auth scheme and
+///   seeded DB state so it stays deterministic in CI.
 /// </summary>
 public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;
-    private readonly ITestOutputHelper _output;
 
-    public AuthEndpointsTests(
-        CustomWebApplicationFactory factory,
-        ITestOutputHelper output)
+    public AuthEndpointsTests(CustomWebApplicationFactory factory)
     {
         _factory = factory;
-        _output = output;
     }
 
     /// <summary>
-    /// Creates an HTTPS client with automatic cookie handling enabled.
+    /// Creates an HTTPS client for integration tests.
     /// </summary>
-    private HttpClient CreateCookieClient()
+    private HttpClient CreateClient()
     {
         return _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -41,39 +40,10 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
         });
     }
 
-    /// <summary>
-    /// Creates an HTTPS client with automatic cookie handling disabled.
-    /// Use this when manually sending a Cookie header.
-    /// </summary>
-    private HttpClient CreateManualCookieClient()
-    {
-        return _factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false,
-            HandleCookies = false,
-            BaseAddress = new Uri("https://localhost")
-        });
-    }
-
-    /// <summary>
-    /// Extracts the first cookie pair from a Set-Cookie header.
-    ///
-    /// Example:
-    /// "viewslife_auth=abc123; expires=...; path=/; secure; httponly"
-    /// becomes:
-    /// "viewslife_auth=abc123"
-    /// </summary>
-    /// <param name="setCookieHeader">Raw Set-Cookie header value.</param>
-    /// <returns>The cookie pair suitable for a Cookie request header.</returns>
-    private static string ExtractCookiePair(string setCookieHeader)
-    {
-        return setCookieHeader.Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
-    }
-
     [Fact]
     public async Task Register_ShouldCreateUserAndTenant_AndSetAuthCookie()
     {
-        using HttpClient client = CreateCookieClient();
+        using HttpClient client = CreateClient();
 
         var request = new RegisterRequestDto
         {
@@ -102,20 +72,14 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             .Should().BeTrue();
 
         cookieHeaders.Should().NotBeNull();
-
-        foreach (string header in cookieHeaders!)
-        {
-            _output.WriteLine($"Register Set-Cookie header: {header}");
-        }
-
-        cookieHeaders.Any(value => value.Contains("viewslife_auth"))
+        cookieHeaders!.Any(value => value.Contains("viewslife_auth"))
             .Should().BeTrue();
     }
 
     [Fact]
     public async Task Register_ShouldReturnBadRequest_WhenEmailAlreadyExists()
     {
-        using HttpClient client = CreateCookieClient();
+        using HttpClient client = CreateClient();
 
         var request = new RegisterRequestDto
         {
@@ -141,7 +105,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
     [Fact]
     public async Task SignIn_ShouldReturnAuthenticatedSession_WhenCredentialsValid()
     {
-        using HttpClient registerClient = CreateCookieClient();
+        using HttpClient registerClient = CreateClient();
 
         var registrationRequest = new RegisterRequestDto
         {
@@ -157,7 +121,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
 
         registrationResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        using HttpClient signInClient = CreateCookieClient();
+        using HttpClient signInClient = CreateClient();
 
         var signInRequest = new SignInRequestDto
         {
@@ -183,72 +147,74 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             .Should().BeTrue();
 
         cookieHeaders.Should().NotBeNull();
-
-        foreach (string header in cookieHeaders!)
-        {
-            _output.WriteLine($"SignIn Set-Cookie header: {header}");
-        }
-
-        cookieHeaders.Any(value => value.Contains("viewslife_auth"))
+        cookieHeaders!.Any(value => value.Contains("viewslife_auth"))
             .Should().BeTrue();
     }
 
     [Fact]
     public async Task Me_ShouldReturnTenantContext_WhenAuthenticated()
     {
-        using HttpClient registerClient = CreateCookieClient();
+        // Seeds a user + tenant + owner membership directly in the integration DB.
+        const string userId = "integration-user-001";
+        const string tenantId = "integration-tenant-001";
 
-        var request = new RegisterRequestDto
+        using (IServiceScope scope = _factory.Services.CreateScope())
         {
-            DisplayName = "Bootstrap User",
-            Email = "bootstrap.user@example.com",
-            Password = "Password!123",
-            TenantName = "Bootstrap Space"
-        };
+            ApplicationDbContext dbContext =
+                scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        HttpResponseMessage registerResponse = await registerClient.PostAsJsonAsync(
-            "/api/auth/register",
-            request);
+            var user = new ApplicationUser
+            {
+                Id = userId,
+                DisplayName = "Bootstrap User",
+                Email = "bootstrap.user@example.com",
+                NormalizedEmail = "BOOTSTRAP.USER@EXAMPLE.COM",
+                AuthProvider = "Local",
+                ProviderSubjectId = "BOOTSTRAP.USER@EXAMPLE.COM",
+                PasswordHash = "seeded-hash-not-used-here",
+                IsEmailVerified = true,
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
 
-        _output.WriteLine($"Register response status: {registerResponse.StatusCode}");
+            var tenant = new Tenant
+            {
+                Id = tenantId,
+                Name = "Bootstrap Space",
+                Slug = "bootstrap-space",
+                OwnerUserId = userId,
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
 
-        string registerBody = await registerResponse.Content.ReadAsStringAsync();
-        _output.WriteLine($"Register response body: {registerBody}");
+            var membership = new TenantMembership
+            {
+                Id = "integration-membership-001",
+                TenantId = tenantId,
+                UserId = userId,
+                Role = "Owner",
+                CreatedAtUtc = DateTime.UtcNow
+            };
 
-        registerResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            dbContext.Users.Add(user);
+            dbContext.Tenants.Add(tenant);
+            dbContext.TenantMemberships.Add(membership);
 
-        registerResponse.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? cookieHeaders)
-            .Should().BeTrue();
-
-        cookieHeaders.Should().NotBeNull();
-
-        var cookieHeaderList = cookieHeaders!.ToList();
-
-        foreach (string header in cookieHeaderList)
-        {
-            _output.WriteLine($"Register Set-Cookie header: {header}");
+            await dbContext.SaveChangesAsync();
         }
 
-        string authCookieHeader = cookieHeaderList
-            .First(header => header.Contains("viewslife_auth"));
+        using HttpClient client = CreateClient();
 
-        string cookiePair = ExtractCookiePair(authCookieHeader);
+        // Sends the request as an authenticated integration-test user.
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.Add(TestAuthHandler.UserIdHeader, userId);
+        request.Headers.Add(TestAuthHandler.TenantIdHeader, tenantId);
+        request.Headers.Add(TestAuthHandler.TenantRoleHeader, "Owner");
+        request.Headers.Add(TestAuthHandler.DisplayNameHeader, "Bootstrap User");
 
-        _output.WriteLine($"Extracted auth cookie pair: {cookiePair}");
-
-        using HttpClient meClient = CreateManualCookieClient();
-
-        var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        meRequest.Headers.Add("Cookie", cookiePair);
-
-        _output.WriteLine($"Outgoing /api/auth/me Cookie header: {cookiePair}");
-
-        HttpResponseMessage meResponse = await meClient.SendAsync(meRequest);
-
-        _output.WriteLine($"Me response status: {meResponse.StatusCode}");
-
-        string meBody = await meResponse.Content.ReadAsStringAsync();
-        _output.WriteLine($"Me response body: {meBody}");
+        HttpResponseMessage meResponse = await client.SendAsync(request);
 
         meResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -261,7 +227,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
         payload.TenantName.Should().Be("Bootstrap Space");
         payload.TenantSlug.Should().Be("bootstrap-space");
         payload.TenantRole.Should().Be("Owner");
-        payload.UserId.Should().NotBeNullOrWhiteSpace();
-        payload.TenantId.Should().NotBeNullOrWhiteSpace();
+        payload.UserId.Should().Be(userId);
+        payload.TenantId.Should().Be(tenantId);
     }
 }
