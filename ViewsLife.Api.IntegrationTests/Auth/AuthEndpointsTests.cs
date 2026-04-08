@@ -13,7 +13,8 @@ namespace ViewsLife.Api.IntegrationTests.Auth;
 /// Context:
 /// - Uses the full API host through WebApplicationFactory.
 /// - Verifies user + tenant bootstrap through real HTTP flows.
-/// - Relies on automatic cookie round-tripping through the configured test host.
+/// - Uses explicit cookie forwarding for the /api/auth/me bootstrap test so the
+///   test remains deterministic in CI environments.
 /// </summary>
 public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {
@@ -25,11 +26,10 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
     }
 
     /// <summary>
-    /// Creates a fresh test client with cookie handling enabled.
-    /// In the Testing environment, the auth cookie policy is adjusted so
-    /// automatic round-tripping works reliably.
+    /// Creates an HTTPS client with automatic cookie handling enabled.
+    /// Use this for requests where the handler should manage cookies.
     /// </summary>
-    private HttpClient CreateClient()
+    private HttpClient CreateCookieClient()
     {
         return _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -39,10 +39,39 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
         });
     }
 
+    /// <summary>
+    /// Creates an HTTPS client with automatic cookie handling disabled.
+    /// Use this when manually sending a Cookie header.
+    /// </summary>
+    private HttpClient CreateManualCookieClient()
+    {
+        return _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            HandleCookies = false,
+            BaseAddress = new Uri("https://localhost")
+        });
+    }
+
+    /// <summary>
+    /// Extracts the first cookie pair from a Set-Cookie header.
+    ///
+    /// Example:
+    /// "viewslife_auth=abc123; expires=...; path=/; secure; httponly"
+    /// becomes:
+    /// "viewslife_auth=abc123"
+    /// </summary>
+    /// <param name="setCookieHeader">Raw Set-Cookie header value.</param>
+    /// <returns>The cookie pair suitable for a Cookie request header.</returns>
+    private static string ExtractCookiePair(string setCookieHeader)
+    {
+        return setCookieHeader.Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+    }
+
     [Fact]
     public async Task Register_ShouldCreateUserAndTenant_AndSetAuthCookie()
     {
-        using HttpClient client = CreateClient();
+        using HttpClient client = CreateCookieClient();
 
         var request = new RegisterRequestDto
         {
@@ -78,7 +107,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
     [Fact]
     public async Task Register_ShouldReturnBadRequest_WhenEmailAlreadyExists()
     {
-        using HttpClient client = CreateClient();
+        using HttpClient client = CreateCookieClient();
 
         var request = new RegisterRequestDto
         {
@@ -104,7 +133,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
     [Fact]
     public async Task SignIn_ShouldReturnAuthenticatedSession_WhenCredentialsValid()
     {
-        using HttpClient registerClient = CreateClient();
+        using HttpClient registerClient = CreateCookieClient();
 
         var registrationRequest = new RegisterRequestDto
         {
@@ -120,7 +149,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
 
         registrationResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        using HttpClient signInClient = CreateClient();
+        using HttpClient signInClient = CreateCookieClient();
 
         var signInRequest = new SignInRequestDto
         {
@@ -153,7 +182,7 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
     [Fact]
     public async Task Me_ShouldReturnTenantContext_WhenAuthenticated()
     {
-        using HttpClient client = CreateClient();
+        using HttpClient registerClient = CreateCookieClient();
 
         var request = new RegisterRequestDto
         {
@@ -163,14 +192,30 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
             TenantName = "Bootstrap Space"
         };
 
-        HttpResponseMessage registerResponse = await client.PostAsJsonAsync(
+        HttpResponseMessage registerResponse = await registerClient.PostAsJsonAsync(
             "/api/auth/register",
             request);
 
         registerResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Uses the same client so the auth cookie is automatically round-tripped.
-        HttpResponseMessage meResponse = await client.GetAsync("/api/auth/me");
+        registerResponse.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? cookieHeaders)
+            .Should().BeTrue();
+
+        cookieHeaders.Should().NotBeNull();
+
+        string authCookieHeader = cookieHeaders!
+            .First(header => header.Contains("viewslife_auth"));
+
+        string cookiePair = ExtractCookiePair(authCookieHeader);
+
+        // Use a client with HandleCookies disabled so the manually added Cookie
+        // header is not overridden or ignored by the handler.
+        using HttpClient meClient = CreateManualCookieClient();
+
+        var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        meRequest.Headers.Add("Cookie", cookiePair);
+
+        HttpResponseMessage meResponse = await meClient.SendAsync(meRequest);
 
         meResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
