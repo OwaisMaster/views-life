@@ -26,6 +26,9 @@ public sealed class ApplicationDbContext : DbContext
     /// Tenant memberships.
     public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
 
+    /// Sign-in attempt tracking for lockout management.
+    public DbSet<SignInAttempt> SignInAttempts => Set<SignInAttempt>();
+
     /// Configures entity mappings, constraints, and indexes.
     /// <param name="modelBuilder">EF Core model builder.</param>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -120,6 +123,26 @@ public sealed class ApplicationDbContext : DbContext
                 .WithMany(user => user.TenantMemberships)
                 .HasForeignKey(membership => membership.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SignInAttempt>(entity =>
+        {
+            entity.HasKey(attempt => attempt.Id);
+
+            entity.Property(attempt => attempt.NormalizedEmail)
+                .IsRequired()
+                .HasMaxLength(320);
+
+            entity.Property(attempt => attempt.FailedAttempts)
+                .IsRequired();
+
+            entity.Property(attempt => attempt.LastFailedAttemptUtc)
+                .IsRequired();
+
+            entity.Property(attempt => attempt.LockedUntilUtc);
+
+            entity.HasIndex(attempt => attempt.NormalizedEmail)
+                .IsUnique();
         });
     }
 }

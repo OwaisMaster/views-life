@@ -8,6 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ViewsLife.Api.Infrastructure.Persistence;
+using ViewsLife.Api.Infrastructure.RateLimiting;
 
 namespace ViewsLife.Api.IntegrationTests;
 

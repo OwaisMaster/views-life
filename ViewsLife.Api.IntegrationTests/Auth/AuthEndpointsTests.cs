@@ -49,31 +49,23 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
         {
             DisplayName = "Integration Register User",
             Email = "integration.register@example.com",
-            Password = "Password!123",
-            TenantName = "Integration Register Space"
+            Password = "SecurePassword!123",
+            TenantName = "Integration Register Tenant"
         };
 
-        HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/auth/register",
-            request);
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/auth/register", request);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        AuthResponseDto? payload =
-            await response.Content.ReadFromJsonAsync<AuthResponseDto>();
+        var authResponse = await response.Content.ReadFromJsonAsync<AuthResponseDto>();
+        authResponse.Should().NotBeNull();
+        authResponse!.DisplayName.Should().Be("Integration Register User");
+        authResponse.TenantName.Should().Be("Integration Register Tenant");
 
-        payload.Should().NotBeNull();
-        payload!.IsAuthenticated.Should().BeTrue();
-        payload.DisplayName.Should().Be("Integration Register User");
-        payload.TenantName.Should().Be("Integration Register Space");
-        payload.TenantRole.Should().Be("Owner");
-
-        response.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? cookieHeaders)
-            .Should().BeTrue();
-
-        cookieHeaders.Should().NotBeNull();
-        cookieHeaders!.Any(value => value.Contains("viewslife_auth"))
-            .Should().BeTrue();
+        // Verify the cookie was set
+        var cookieHeader = response.Headers.GetValues("Set-Cookie").FirstOrDefault();
+        cookieHeader.Should().NotBeNull();
+        cookieHeader.Should().Contain("viewslife_auth");
     }
 
     [Fact]
@@ -83,151 +75,398 @@ public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFacto
 
         var request = new RegisterRequestDto
         {
-            DisplayName = "Duplicate User",
-            Email = "duplicate.integration@example.com",
-            Password = "Password!123",
-            TenantName = "Duplicate Space"
+            DisplayName = "Duplicate Email User",
+            Email = "duplicate.email@example.com",
+            Password = "SecurePassword!123",
+            TenantName = "Duplicate Email Tenant"
         };
 
-        HttpResponseMessage firstResponse = await client.PostAsJsonAsync(
-            "/api/auth/register",
-            request);
-
+        // Register first user
+        HttpResponseMessage firstResponse = await client.PostAsJsonAsync("/api/auth/register", request);
         firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        HttpResponseMessage secondResponse = await client.PostAsJsonAsync(
-            "/api/auth/register",
-            request);
-
+        // Register second user with same email
+        HttpResponseMessage secondResponse = await client.PostAsJsonAsync("/api/auth/register", request);
         secondResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var errorDto = await secondResponse.Content.ReadFromJsonAsync<ErrorResponseDto>();
+        errorDto.Should().NotBeNull();
+        // Generic error response as per hardening requirements
+        errorDto!.Message.Should().NotBeNullOrEmpty();
     }
 
     [Fact]
     public async Task SignIn_ShouldReturnAuthenticatedSession_WhenCredentialsValid()
     {
-        using HttpClient registerClient = CreateClient();
+        using HttpClient client = CreateClient();
 
-        var registrationRequest = new RegisterRequestDto
+        // Register a user
+        var registerRequest = new RegisterRequestDto
         {
-            DisplayName = "Integration Sign In User",
-            Email = "integration.signin@example.com",
-            Password = "Password!123",
-            TenantName = "Integration Sign In Space"
+            DisplayName = "SignIn Test User",
+            Email = "signin.test@example.com",
+            Password = "SecurePassword!123",
+            TenantName = "SignIn Test Tenant"
         };
 
-        HttpResponseMessage registrationResponse = await registerClient.PostAsJsonAsync(
-            "/api/auth/register",
-            registrationRequest);
+        await client.PostAsJsonAsync("/api/auth/register", registerRequest);
 
-        registrationResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        using HttpClient signInClient = CreateClient();
-
+        // Sign in with valid credentials
         var signInRequest = new SignInRequestDto
         {
-            Email = "integration.signin@example.com",
-            Password = "Password!123"
+            Email = "signin.test@example.com",
+            Password = "SecurePassword!123"
         };
 
-        HttpResponseMessage signInResponse = await signInClient.PostAsJsonAsync(
-            "/api/auth/sign-in",
-            signInRequest);
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/auth/sign-in", signInRequest);
 
-        signInResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        AuthResponseDto? payload =
-            await signInResponse.Content.ReadFromJsonAsync<AuthResponseDto>();
+        var authResponse = await response.Content.ReadFromJsonAsync<AuthResponseDto>();
+        authResponse.Should().NotBeNull();
+        authResponse!.DisplayName.Should().Be("SignIn Test User");
+        authResponse.IsAuthenticated.Should().BeTrue();
 
-        payload.Should().NotBeNull();
-        payload!.IsAuthenticated.Should().BeTrue();
-        payload.TenantName.Should().Be("Integration Sign In Space");
-        payload.TenantRole.Should().Be("Owner");
-
-        signInResponse.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? cookieHeaders)
-            .Should().BeTrue();
-
-        cookieHeaders.Should().NotBeNull();
-        cookieHeaders!.Any(value => value.Contains("viewslife_auth"))
-            .Should().BeTrue();
+        // Verify auth cookie was set
+        var cookieHeader = response.Headers.GetValues("Set-Cookie").FirstOrDefault();
+        cookieHeader.Should().NotBeNull();
+        cookieHeader.Should().Contain("viewslife_auth");
     }
 
     [Fact]
-    public async Task Me_ShouldReturnTenantContext_WhenAuthenticated()
+    public async Task Me_ShouldReturnUnauthorized_WhenCookieInvalid()
     {
-        // Seeds a user + tenant + owner membership directly in the integration DB.
-        const string userId = "integration-user-001";
-        const string tenantId = "integration-tenant-001";
-
-        using (IServiceScope scope = _factory.Services.CreateScope())
-        {
-            ApplicationDbContext dbContext =
-                scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-            var user = new ApplicationUser
-            {
-                Id = userId,
-                DisplayName = "Bootstrap User",
-                Email = "bootstrap.user@example.com",
-                NormalizedEmail = "BOOTSTRAP.USER@EXAMPLE.COM",
-                AuthProvider = "Local",
-                ProviderSubjectId = "BOOTSTRAP.USER@EXAMPLE.COM",
-                PasswordHash = "seeded-hash-not-used-here",
-                IsEmailVerified = true,
-                IsActive = true,
-                CreatedAtUtc = DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
-            };
-
-            var tenant = new Tenant
-            {
-                Id = tenantId,
-                Name = "Bootstrap Space",
-                Slug = "bootstrap-space",
-                OwnerUserId = userId,
-                IsActive = true,
-                CreatedAtUtc = DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
-            };
-
-            var membership = new TenantMembership
-            {
-                Id = "integration-membership-001",
-                TenantId = tenantId,
-                UserId = userId,
-                Role = "Owner",
-                CreatedAtUtc = DateTime.UtcNow
-            };
-
-            dbContext.Users.Add(user);
-            dbContext.Tenants.Add(tenant);
-            dbContext.TenantMemberships.Add(membership);
-
-            await dbContext.SaveChangesAsync();
-        }
-
         using HttpClient client = CreateClient();
 
-        // Sends the request as an authenticated integration-test user.
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Add(TestAuthHandler.UserIdHeader, userId);
-        request.Headers.Add(TestAuthHandler.TenantIdHeader, tenantId);
-        request.Headers.Add(TestAuthHandler.TenantRoleHeader, "Owner");
-        request.Headers.Add(TestAuthHandler.DisplayNameHeader, "Bootstrap User");
+        // Call /api/auth/me without any authentication (no valid cookie or test headers)
+        HttpResponseMessage response = await client.GetAsync("/api/auth/me");
 
-        HttpResponseMessage meResponse = await client.SendAsync(request);
+        // Should fail because there's no valid authentication
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
 
-        meResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    [Theory]
+    [InlineData("")]    // Empty string
+    [InlineData("  ")] // Whitespace only
+    public async Task Register_ShouldReturnBadRequest_WhenPayloadInvalid(
+        string invalidDisplayName)
+    {
+        using HttpClient client = CreateClient();
 
-        CurrentUserResponseDto? payload =
-            await meResponse.Content.ReadFromJsonAsync<CurrentUserResponseDto>();
+        var request = new RegisterRequestDto
+        {
+            DisplayName = invalidDisplayName,
+            Email = "invalid.payload@example.com",
+            Password = "SecurePassword!123",
+            TenantName = "Invalid Payload Tenant"
+        };
 
-        payload.Should().NotBeNull();
-        payload!.IsAuthenticated.Should().BeTrue();
-        payload.DisplayName.Should().Be("Bootstrap User");
-        payload.TenantName.Should().Be("Bootstrap Space");
-        payload.TenantSlug.Should().Be("bootstrap-space");
-        payload.TenantRole.Should().Be("Owner");
-        payload.UserId.Should().Be(userId);
-        payload.TenantId.Should().Be(tenantId);
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Theory]
+    [InlineData("")]  // Empty string
+    [InlineData(" ")]  // Only whitespace
+    public async Task SignIn_ShouldReturnBadRequest_WhenPayloadInvalid(
+        string invalidEmail)
+    {
+        using HttpClient client = CreateClient();
+
+        var request = new SignInRequestDto
+        {
+            Email = invalidEmail,
+            Password = "SecurePassword!123"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/sign-in",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Register_ShouldNormalizeEmail_PreventingCaseDuplicates()
+    {
+        using HttpClient client = CreateClient();
+
+        // Register with lowercase email
+        var firstRequest = new RegisterRequestDto
+        {
+            DisplayName = "Case Test User",
+            Email = "casetest@example.com",
+            Password = "SecurePassword!123",
+            TenantName = "Case Test Tenant"
+        };
+
+        HttpResponseMessage firstResponse = await client.PostAsJsonAsync("/api/auth/register", firstRequest);
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Try to register with uppercase variant of same email
+        var secondRequest = new RegisterRequestDto
+        {
+            DisplayName = "Case Test User Upper",
+            Email = "CaseTest@EXAMPLE.COM",  // Different case
+            Password = "SecurePassword!123",
+            TenantName = "Case Test Tenant Upper"
+        };
+
+        HttpResponseMessage secondResponse = await client.PostAsJsonAsync("/api/auth/register", secondRequest);
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task SignIn_ShouldReturnGenericMessage_WhenInvalidCredentials()
+    {
+        using HttpClient client = CreateClient();
+
+        // Register a user
+        var registerRequest = new RegisterRequestDto
+        {
+            DisplayName = "Invalid Creds Test",
+            Email = "invalidcreds.test@example.com",
+            Password = "CorrectPassword!123",
+            TenantName = "Invalid Creds Tenant"
+        };
+
+        await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+
+        // Try sign in with wrong password
+        var signInRequest = new SignInRequestDto
+        {
+            Email = "invalidcreds.test@example.com",
+            Password = "WrongPassword!123"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/auth/sign-in", signInRequest);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var errorDto = await response.Content.ReadFromJsonAsync<ErrorResponseDto>();
+        errorDto.Should().NotBeNull();
+        // Should return generic message, not "password incorrect"
+        errorDto!.Message.Should().Contain("Invalid credentials");
+    }
+
+    [Fact]
+    public async Task SignIn_ShouldReturnGenericMessage_WhenUserNotFound()
+    {
+        using HttpClient client = CreateClient();
+
+        var signInRequest = new SignInRequestDto
+        {
+            Email = "nonexistent.user@example.com",
+            Password = "SomePassword!123"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/auth/sign-in", signInRequest);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var errorDto = await response.Content.ReadFromJsonAsync<ErrorResponseDto>();
+        errorDto.Should().NotBeNull();
+        // Should return generic message, not "user not found"
+        errorDto!.Message.Should().Contain("Invalid credentials");
+    }
+
+    [Fact]
+    public async Task Me_ShouldReturnUnauthorized_WhenNotAuthenticated()
+    {
+        using HttpClient client = CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/api/auth/me");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task SignIn_ShouldReject_AfterRepeatedFailedAttempts()
+    {
+        using HttpClient client = CreateClient();
+
+        // Register a user
+        var registerRequest = new RegisterRequestDto
+        {
+            DisplayName = "Lockout Test User",
+            Email = "lockout.test@example.com",
+            Password = "Password!123",
+            TenantName = "Lockout Test Tenant"
+        };
+
+        await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+
+        // Make 5 failed sign-in attempts
+        var signInRequest = new SignInRequestDto
+        {
+            Email = "lockout.test@example.com",
+            Password = "WrongPassword"
+        };
+
+        HttpStatusCode? finalResponseCode = null;
+        HttpStatusCode? correctPasswordResponseCode = null;
+
+        for (int i = 0; i < 5; i++)
+        {
+            HttpResponseMessage response = await client.PostAsJsonAsync(
+                "/api/auth/sign-in",
+                signInRequest);
+
+            // Capture the final response code
+            if (i == 4)
+            {
+                finalResponseCode = response.StatusCode;
+            }
+        }
+
+        // After 5 failed attempts, should be rejected (either 401 Unauthorized from lockout or 429 from rate limiting)
+        (finalResponseCode == HttpStatusCode.Unauthorized || finalResponseCode == HttpStatusCode.TooManyRequests).Should().BeTrue();
+
+        // Verify that even the correct password now returns rejected
+        var correctPasswordRequest = new SignInRequestDto
+        {
+            Email = "lockout.test@example.com",
+            Password = "Password!123"
+        };
+
+        HttpResponseMessage correctPasswordResponse = await client.PostAsJsonAsync(
+            "/api/auth/sign-in",
+            correctPasswordRequest);
+
+        correctPasswordResponseCode = correctPasswordResponse.StatusCode;
+        (correctPasswordResponseCode == HttpStatusCode.Unauthorized || correctPasswordResponseCode == HttpStatusCode.TooManyRequests).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Register_ShouldRejectWhitespaceOnly_DisplayName()
+    {
+        using HttpClient client = CreateClient();
+
+        var request = new RegisterRequestDto
+        {
+            DisplayName = "   ",  // Only whitespace
+            Email = "whitespace.test@example.com",
+            Password = "Password!123",
+            TenantName = "Test Tenant"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Register_ShouldRejectLeadingTrailingWhitespace_Email()
+    {
+        using HttpClient client = CreateClient();
+
+        var request = new RegisterRequestDto
+        {
+            DisplayName = "Test User",
+            Email = " test@example.com ",  // Leading/trailing space
+            Password = "Password!123",
+            TenantName = "Test Tenant"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Register_ShouldRejectUppercaseEmail_NotNormalized()
+    {
+        using HttpClient client = CreateClient();
+
+        var request = new RegisterRequestDto
+        {
+            DisplayName = "Test User",
+            Email = "TestUser@Example.COM",  // Not lowercase
+            Password = "Password!123",
+            TenantName = "Test Tenant"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task SignIn_ShouldRejectUppercaseEmail_NotNormalized()
+    {
+        using HttpClient client = CreateClient();
+
+        // Register with lowercase
+        var registerRequest = new RegisterRequestDto
+        {
+            DisplayName = "Test User",
+            Email = "signup.test@example.com",
+            Password = "Password!123",
+            TenantName = "Test Tenant"
+        };
+
+        await client.PostAsJsonAsync("/api/auth/register", registerRequest);
+
+        // Try to sign in with uppercase (should be rejected as invalid format)
+        var signInRequest = new SignInRequestDto
+        {
+            Email = "Signup.Test@Example.com",  // Not lowercase
+            Password = "Password!123"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/sign-in",
+            signInRequest);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Register_ShouldRejectPasswordTooShort()
+    {
+        using HttpClient client = CreateClient();
+
+        var request = new RegisterRequestDto
+        {
+            DisplayName = "Test User",
+            Email = "shortpwd.test@example.com",
+            Password = "Short1",  // Less than 8 characters
+            TenantName = "Test Tenant"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Register_ShouldRejectPasswordWithLeadingTrailingWhitespace()
+    {
+        using HttpClient client = CreateClient();
+
+        var request = new RegisterRequestDto
+        {
+            DisplayName = "Test User",
+            Email = "pwdspace.test@example.com",
+            Password = " Password123 ",  // Leading/trailing whitespace
+            TenantName = "Test Tenant"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }

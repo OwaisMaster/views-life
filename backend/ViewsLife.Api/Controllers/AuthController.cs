@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Domains.Auth.Dtos;
 using ViewsLife.Api.Domains.Auth.Interfaces;
+using ViewsLife.Api.Infrastructure.Logging;
 
 namespace ViewsLife.Api.Controllers;
 
@@ -14,12 +15,17 @@ namespace ViewsLife.Api.Controllers;
 public sealed class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly IAuditLogger _auditLogger;
     private readonly IWebHostEnvironment _environment;
 
     /// Creates a new auth controller instance.
-    public AuthController(IAuthService authService, IWebHostEnvironment environment)
+    public AuthController(
+        IAuthService authService,
+        IAuditLogger auditLogger,
+        IWebHostEnvironment environment)
     {
         _authService = authService;
+        _auditLogger = auditLogger;
         _environment = environment;
     }
 
@@ -28,23 +34,47 @@ public sealed class AuthController : ControllerBase
     /// <returns>Authenticated session response.</returns>
     [HttpPost("register")]
     [ProducesResponseType(typeof(AuthResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<AuthResponseDto>> Register(
         [FromBody] RegisterRequestDto request,
         CancellationToken cancellationToken)
     {
+        // Model validation is automatic via [ApiController] and validation attributes.
+        // If we reach here, the request passed all validation.
         try
         {
             AuthResponseDto response =
                 await _authService.RegisterLocalAsync(request, cancellationToken);
 
+            // Log successful registration
+            await _auditLogger.LogAuditEventAsync(
+                AuditEventType.RegistrationSucceeded,
+                response.UserId,
+                request.Email,
+                GetClientIp(),
+                $"Tenant: {response.TenantId}");
+
             await IssueAuthCookieAsync(response);
 
             return Ok(response);
         }
-        catch (InvalidOperationException exception)
+        catch (InvalidOperationException)
         {
-            return BadRequest(new { message = exception.Message });
+            // Log registration failure
+            await _auditLogger.LogAuditEventAsync(
+                AuditEventType.RegistrationFailed,
+                "[unknown]",
+                request.Email,
+                GetClientIp(),
+                "Duplicate email or other validation failure");
+
+            // Generic response for duplicate email to prevent account enumeration.
+            // Do not expose the specific reason for the 400 error.
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Registration failed. Please check your input and try again.",
+                ErrorCode = "REGISTRATION_FAILED"
+            });
         }
     }
 
@@ -53,27 +83,85 @@ public sealed class AuthController : ControllerBase
     /// <returns>Authenticated session response.</returns>
     [HttpPost("sign-in")]
     [ProducesResponseType(typeof(AuthResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<AuthResponseDto>> SignIn(
         [FromBody] SignInRequestDto request,
         CancellationToken cancellationToken)
     {
+        // Model validation is automatic via [ApiController] and validation attributes.
+        // If we reach here, the request passed all validation.
         try
         {
             AuthResponseDto response =
                 await _authService.SignInLocalAsync(request, cancellationToken);
 
+            // Log successful sign-in
+            await _auditLogger.LogAuditEventAsync(
+                AuditEventType.SignInSucceeded,
+                response.UserId,
+                request.Email,
+                GetClientIp(),
+                $"Tenant: {response.TenantId}");
+
             await IssueAuthCookieAsync(response);
 
             return Ok(response);
         }
-        catch (UnauthorizedAccessException exception)
+        catch (UnauthorizedAccessException ex) when (ex.Message.Contains("temporarily locked"))
         {
-            return Unauthorized(new { message = exception.Message });
+            // Log account lockout
+            await _auditLogger.LogAuditEventAsync(
+                AuditEventType.AccountLockedOut,
+                "[unknown]",
+                request.Email,
+                GetClientIp(),
+                "Account locked due to repeated failed attempts");
+
+            // Account is locked due to repeated failed attempts
+            return StatusCode(
+                StatusCodes.Status429TooManyRequests,
+                new ErrorResponseDto
+                {
+                    Message = "Too many failed sign-in attempts. Please try again later.",
+                    ErrorCode = "ACCOUNT_LOCKED"
+                });
         }
-        catch (InvalidOperationException exception)
+        catch (UnauthorizedAccessException)
         {
-            return BadRequest(new { message = exception.Message });
+            // Log failed sign-in
+            await _auditLogger.LogAuditEventAsync(
+                AuditEventType.SignInFailed,
+                "[unknown]",
+                request.Email,
+                GetClientIp(),
+                "Invalid credentials");
+
+            // Generic response for invalid credentials to prevent account enumeration.
+            // Do not reveal whether the email exists or password is wrong.
+            return Unauthorized(new ErrorResponseDto
+            {
+                Message = "Invalid credentials.",
+                ErrorCode = "INVALID_CREDENTIALS"
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // Log sign-in failure
+            await _auditLogger.LogAuditEventAsync(
+                AuditEventType.SignInFailed,
+                "[unknown]",
+                request.Email,
+                GetClientIp(),
+                "Sign-in failed (no active tenant)");
+
+            // Other validation failures (e.g., inactive account, no tenant)
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Sign-in failed. Please check your input and try again.",
+                ErrorCode = "SIGNIN_FAILED"
+            });
         }
     }
 
@@ -83,7 +171,7 @@ public sealed class AuthController : ControllerBase
     [Authorize]
     [HttpGet("me")]
     [ProducesResponseType(typeof(CurrentUserResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<CurrentUserResponseDto>> Me(
         CancellationToken cancellationToken)
     {
@@ -104,8 +192,20 @@ public sealed class AuthController : ControllerBase
     [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
     [HttpPost("sign-out")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> SignOut()
     {
+        var userId = User.FindFirstValue(AuthConstants.UserIdClaimType);
+        var email = User.FindFirstValue(ClaimTypes.Name);
+
+        // Log sign-out
+        await _auditLogger.LogAuditEventAsync(
+            AuditEventType.SignOutOccurred,
+            userId ?? "[unknown]",
+            null,
+            GetClientIp(),
+            null);
+
         await HttpContext.SignOutAsync(AuthConstants.AuthScheme);
         return NoContent();
     }
@@ -113,16 +213,47 @@ public sealed class AuthController : ControllerBase
     /// Placeholder Apple sign-in endpoint.
     [HttpPost("apple")]
     [ProducesResponseType(typeof(AuthResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<AuthResponseDto>> AppleSignIn(
         [FromBody] AppleSignInRequestDto request,
         CancellationToken cancellationToken)
     {
-        AuthResponseDto response =
-            await _authService.SignInWithAppleAsync(request, cancellationToken);
+        try
+        {
+            AuthResponseDto response =
+                await _authService.SignInWithAppleAsync(request, cancellationToken);
 
-        await IssueAuthCookieAsync(response);
+            await IssueAuthCookieAsync(response);
 
-        return Ok(response);
+            return Ok(response);
+        }
+        catch (NotImplementedException)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Apple sign-in is not yet available.",
+                ErrorCode = "NOT_IMPLEMENTED"
+            });
+        }
+    }
+
+    /// <summary>
+    /// Gets the client IP address from the request.
+    /// </summary>
+    private string GetClientIp()
+    {
+        // Check X-Forwarded-For header (for proxies)
+        if (HttpContext.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded))
+        {
+            var ips = forwarded.ToString().Split(',');
+            if (ips.Length > 0 && !string.IsNullOrWhiteSpace(ips[0]))
+            {
+                return ips[0].Trim();
+            }
+        }
+
+        // Fall back to remote IP
+        return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     }
 
     /// Issues the application auth cookie using the supplied session context.

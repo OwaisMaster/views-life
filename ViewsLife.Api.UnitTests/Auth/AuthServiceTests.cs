@@ -1,21 +1,25 @@
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using ViewsLife.Api.Domains.Auth.Dtos;
 using ViewsLife.Api.Domains.Auth.Entities;
+using ViewsLife.Api.Domains.Auth.Interfaces;
 using ViewsLife.Api.Domains.Auth.Services;
 using ViewsLife.Api.Infrastructure.Persistence;
 using Xunit;
 
 namespace ViewsLife.Api.UnitTests.Auth;
 
-/// Unit-style tests for AuthService using an isolated SQLite in-memory database.
-///
-/// Context:
-/// - The service now depends directly on ApplicationDbContext.
-/// - SQLite in-memory provides relational behavior without relying on the dev database.
 public sealed class AuthServiceTests
 {
+    private readonly Mock<ILockoutService> _lockoutServiceMock;
+
+    public AuthServiceTests()
+    {
+        _lockoutServiceMock = new Mock<ILockoutService>();
+    }
+
     [Fact]
     public async Task RegisterLocalAsync_ShouldCreateUserTenantAndOwnerMembership()
     {
@@ -30,7 +34,7 @@ public sealed class AuthServiceTests
         await using var dbContext = new ApplicationDbContext(options);
         await dbContext.Database.EnsureCreatedAsync();
 
-        var service = new AuthService(dbContext);
+        var service = new AuthService(dbContext, _lockoutServiceMock.Object);
 
         var request = new RegisterRequestDto
         {
@@ -95,7 +99,7 @@ public sealed class AuthServiceTests
         await using var dbContext = new ApplicationDbContext(options);
         await dbContext.Database.EnsureCreatedAsync();
 
-        var service = new AuthService(dbContext);
+        var service = new AuthService(dbContext, _lockoutServiceMock.Object);
 
         var firstRequest = new RegisterRequestDto
         {
@@ -121,7 +125,7 @@ public sealed class AuthServiceTests
 
         await action.Should()
             .ThrowAsync<InvalidOperationException>()
-            .WithMessage("An account with that email already exists.");
+            .WithMessage("Email already exists.");
     }
 
     [Fact]
@@ -138,7 +142,7 @@ public sealed class AuthServiceTests
         await using var dbContext = new ApplicationDbContext(options);
         await dbContext.Database.EnsureCreatedAsync();
 
-        var service = new AuthService(dbContext);
+        var service = new AuthService(dbContext, _lockoutServiceMock.Object);
 
         var registrationRequest = new RegisterRequestDto
         {
@@ -183,7 +187,7 @@ public sealed class AuthServiceTests
         await using var dbContext = new ApplicationDbContext(options);
         await dbContext.Database.EnsureCreatedAsync();
 
-        var service = new AuthService(dbContext);
+        var service = new AuthService(dbContext, _lockoutServiceMock.Object);
 
         var registrationRequest = new RegisterRequestDto
         {

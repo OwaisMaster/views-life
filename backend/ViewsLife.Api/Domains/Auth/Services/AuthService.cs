@@ -15,21 +15,25 @@ namespace ViewsLife.Api.Domains.Auth.Services;
 ///   2. tenant
 ///   3. owner membership
 /// - Sign-in returns the persisted user + tenant context used to issue auth claims.
+/// - Account lockout is applied after repeated failed sign-in attempts.
 public sealed class AuthService : IAuthService
 {
     private readonly ApplicationDbContext _dbContext;
+    private readonly ILockoutService _lockoutService;
     private readonly PasswordHasher<ApplicationUser> _passwordHasher = new();
 
     /// Creates a new auth service instance.
-    public AuthService(ApplicationDbContext dbContext)
+    public AuthService(ApplicationDbContext dbContext, ILockoutService lockoutService)
     {
         _dbContext = dbContext;
+        _lockoutService = lockoutService;
     }
 
     public async Task<AuthResponseDto> RegisterLocalAsync(
         RegisterRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        // Email is already normalized (lowercase, trimmed) by NormalizedEmail validator
         string normalizedEmail = NormalizeEmail(request.Email);
 
         bool emailAlreadyExists = await _dbContext.Users
@@ -39,7 +43,7 @@ public sealed class AuthService : IAuthService
 
         if (emailAlreadyExists)
         {
-            throw new InvalidOperationException("An account with that email already exists.");
+            throw new InvalidOperationException("Email already exists.");
         }
 
         string tenantSlug = await GenerateUniqueTenantSlugAsync(
@@ -48,8 +52,8 @@ public sealed class AuthService : IAuthService
 
         var user = new ApplicationUser
         {
-            DisplayName = request.DisplayName.Trim(),
-            Email = request.Email.Trim(),
+            DisplayName = request.DisplayName,
+            Email = request.Email,
             NormalizedEmail = normalizedEmail,
             AuthProvider = "Local",
             ProviderSubjectId = normalizedEmail,
@@ -63,7 +67,7 @@ public sealed class AuthService : IAuthService
 
         var tenant = new Tenant
         {
-            Name = request.TenantName.Trim(),
+            Name = request.TenantName,
             Slug = tenantSlug,
             OwnerUserId = user.Id,
             IsActive = true,
@@ -108,7 +112,14 @@ public sealed class AuthService : IAuthService
         SignInRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        // Email is already normalized (lowercase, trimmed) by NormalizedEmail validator
         string normalizedEmail = NormalizeEmail(request.Email);
+
+        // Check if the account is locked
+        if (await _lockoutService.IsLockedOutAsync(normalizedEmail, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("Account is temporarily locked due to repeated failed sign-in attempts.");
+        }
 
         ApplicationUser? user = await _dbContext.Users
             .AsNoTracking()
@@ -119,6 +130,8 @@ public sealed class AuthService : IAuthService
 
         if (user is null || string.IsNullOrWhiteSpace(user.PasswordHash) || !user.IsActive)
         {
+            // Record failed attempt
+            await _lockoutService.RecordFailedAttemptAsync(normalizedEmail, cancellationToken);
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
 
@@ -130,8 +143,13 @@ public sealed class AuthService : IAuthService
 
         if (passwordResult == PasswordVerificationResult.Failed)
         {
+            // Record failed attempt
+            await _lockoutService.RecordFailedAttemptAsync(normalizedEmail, cancellationToken);
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
+
+        // Reset failed attempts on successful sign-in
+        await _lockoutService.ResetFailedAttemptsAsync(normalizedEmail, cancellationToken);
 
         var tenantContext = await _dbContext.TenantMemberships
             .AsNoTracking()
