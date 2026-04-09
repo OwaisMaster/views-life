@@ -1,7 +1,7 @@
 # Phase 1 Progress — ViewsLife
 
 **Status:** In Progress (Core Foundations Established)
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-04-09
 
 ---
 
@@ -69,6 +69,26 @@ Phase 1 focuses on establishing a secure, production-ready foundation for:
 
 ---
 
+### 2.4 Auth Security Hardening
+
+**Implemented**
+- Account lockout after 5 consecutive failed sign-in attempts (15-minute lockout)
+- Rate limiting (100 requests per hour per IP)
+- Email normalization and validation
+- Generic error messages to prevent enumeration attacks
+- Audit logging with sensitive data masking
+- Input sanitization and validation attributes
+
+**Security Features**
+- Lockout service tracking failed attempts per normalized email
+- Rate limiting middleware with sliding window
+- Audit logging for all auth operations
+- Comprehensive input validation (TrimmedStringAttribute, NormalizedEmailAttribute)
+
+**Database Schema**
+- Added `SignInAttempts` table for lockout tracking
+- Unique index on normalized email for efficient lookups
+
 ### 2.4 Frontend Authentication UX
 
 **Implemented**
@@ -113,16 +133,23 @@ Phase 1 focuses on establishing a secure, production-ready foundation for:
 | Sign-in success | ✅ |
 | Auth cookie issuance | ✅ |
 | `/api/auth/me` tenant context | ✅ |
+| Account lockout after failed attempts | ✅ |
+| Rate limiting enforcement | ✅ |
+| Generic error messages | ✅ |
+| Input validation | ✅ |
+| Audit logging | ✅ |
+
+**Test Suite**
+- 25 total tests (5 unit + 20 integration)
+- All tests passing in CI and local environments
+- Comprehensive security feature validation
 
 **Key Improvements**
 - Removed fragile cookie round-trip dependency
 - Introduced deterministic `TestAuthHandler`
 - Seeded database for authenticated scenarios
 - Eliminated CI-only flakiness
-
-**Outcome**
-- Tests pass locally and in CI
-- Stable across environments
+- Added security hardening test coverage
 
 ---
 
@@ -195,10 +222,12 @@ Includes protection for:
 - Claims-driven authorization
 - Tenant isolation via claims
 - Sensitive files excluded via `.gitignore`
+- Account lockout protection
+- Rate limiting against abuse
+- Audit logging for compliance
+- Input validation and sanitization
 
 **Known Gaps** *(Expected for Phase 1)*
-- No rate limiting
-- No account lockout
 - No email verification
 - No refresh token strategy
 - No external provider integration
@@ -243,7 +272,8 @@ You now have:
 
 - A working multi-tenant auth system
 - Secure user onboarding flow
-- Deterministic integration testing
+- Production-grade security hardening (lockout, rate limiting, audit logging)
+- Deterministic integration testing (25 tests)
 - Stable CI pipeline
 - Clean, production-aligned codebase
 - No dev-only shortcuts remaining
