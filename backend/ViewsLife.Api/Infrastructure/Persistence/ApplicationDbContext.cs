@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ViewsLife.Api.Domains.Auth.Entities;
+using ViewsLife.Api.Domains.Notes.Entities;
 
 namespace ViewsLife.Api.Infrastructure.Persistence;
 
@@ -28,6 +29,9 @@ public sealed class ApplicationDbContext : DbContext
 
     /// Sign-in attempt tracking for lockout management.
     public DbSet<SignInAttempt> SignInAttempts => Set<SignInAttempt>();
+
+    /// Tenant-scoped notes.
+    public DbSet<Note> Notes => Set<Note>();
 
     /// Configures entity mappings, constraints, and indexes.
     /// <param name="modelBuilder">EF Core model builder.</param>
@@ -143,6 +147,39 @@ public sealed class ApplicationDbContext : DbContext
 
             entity.HasIndex(attempt => attempt.NormalizedEmail)
                 .IsUnique();
+        });
+
+        modelBuilder.Entity<Note>(entity =>
+        {
+            entity.HasKey(note => note.Id);
+
+            entity.Property(note => note.TenantId)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            entity.Property(note => note.CreatedByUserId)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            entity.Property(note => note.Title)
+                .IsRequired()
+                .HasMaxLength(200);
+
+            entity.Property(note => note.Content)
+                .IsRequired();
+
+            entity.Property(note => note.Visibility)
+                .IsRequired()
+                .HasMaxLength(50)
+                .HasDefaultValue("Private");
+
+            entity.Property(note => note.CreatedAtUtc)
+                .IsRequired();
+
+            entity.Property(note => note.UpdatedAtUtc)
+                .IsRequired();
+
+            entity.HasIndex(note => note.TenantId);
         });
     }
 }

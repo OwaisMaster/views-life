@@ -42,6 +42,14 @@ export default async function DashboardPage() {
           protected slices should be note listing, note detail, and tenant-owned
           CRUD flows.
         </p>
+        <div className="mt-4">
+          <a
+            href="/dashboard/notes"
+            className="inline-flex rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            View notes
+          </a>
+        </div>
       </section>
     </div>
   );

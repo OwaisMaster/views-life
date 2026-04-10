@@ -4,6 +4,8 @@ using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Domains.Auth.Interfaces;
 using ViewsLife.Api.Domains.Auth.Repositories;
 using ViewsLife.Api.Domains.Auth.Services;
+using ViewsLife.Api.Domains.Notes.Interfaces;
+using ViewsLife.Api.Domains.Notes.Services;
 using ViewsLife.Api.Infrastructure.Logging;
 using ViewsLife.Api.Infrastructure.Options;
 using ViewsLife.Api.Infrastructure.Persistence;
@@ -35,6 +37,9 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ILockoutService, LockoutService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAuditLogger, AuditLogger>();
+
+// Registers note services.
+builder.Services.AddScoped<INoteService, NoteService>();
 
 // Registers rate limiting services.
 builder.Services.AddSingleton<RateLimitManager>();

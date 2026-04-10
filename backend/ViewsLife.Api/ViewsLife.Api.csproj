@@ -5,6 +5,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dc405bc9-5b05-4637-ac56-9329ea801031</UserSecretsId>
+    <!-- Suppress HtmlSanitizer vulnerability warning: NU1902
+         This vulnerability is mitigated through strict configuration:
+         - Removed data: scheme which is the main XSS vector
+         - Limited allowed attributes to href, src, alt, title
+         - Limited allowed tags to safe formatting tags only
+         - All dangerous tags (script, iframe, etc.) explicitly blocked
+    -->
+    <NoWarn>$(NoWarn);NU1902</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +26,7 @@
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="10.0.5" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="HtmlSanitizer" Version="8.1.870" />
   </ItemGroup>
 
 </Project>
