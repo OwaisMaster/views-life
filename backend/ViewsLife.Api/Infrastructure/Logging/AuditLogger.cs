@@ -55,6 +55,7 @@ public sealed class AuditLogger : IAuditLogger
         string? ipAddress,
         string? details)
     {
+        _ = email; // Intentionally not logged to avoid exposing private account metadata.
         string safeUserId = SanitizeForLog(userId);
         string safeIpAddress = SanitizeForLog(ipAddress);
         string safeDetails = SanitizeForLog(details);
