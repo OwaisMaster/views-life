@@ -1,7 +1,7 @@
 # Phase 1 Progress — ViewsLife
 
 **Status:** In Progress (Core Foundations Established)
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-04-09
 
 ---
 
@@ -69,6 +69,26 @@ Phase 1 focuses on establishing a secure, production-ready foundation for:
 
 ---
 
+### 2.4 Auth Security Hardening
+
+**Implemented**
+- Account lockout after 5 consecutive failed sign-in attempts (15-minute lockout)
+- Rate limiting (100 requests per hour per IP)
+- Email normalization and validation
+- Generic error messages to prevent enumeration attacks
+- Audit logging with sensitive data masking
+- Input sanitization and validation attributes
+
+**Security Features**
+- Lockout service tracking failed attempts per normalized email
+- Rate limiting middleware with sliding window
+- Audit logging for all auth operations
+- Comprehensive input validation (TrimmedStringAttribute, NormalizedEmailAttribute)
+
+**Database Schema**
+- Added `SignInAttempts` table for lockout tracking
+- Unique index on normalized email for efficient lookups
+
 ### 2.4 Frontend Authentication UX
 
 **Implemented**
@@ -113,16 +133,23 @@ Phase 1 focuses on establishing a secure, production-ready foundation for:
 | Sign-in success | ✅ |
 | Auth cookie issuance | ✅ |
 | `/api/auth/me` tenant context | ✅ |
+| Account lockout after failed attempts | ✅ |
+| Rate limiting enforcement | ✅ |
+| Generic error messages | ✅ |
+| Input validation | ✅ |
+| Audit logging | ✅ |
+
+**Test Suite**
+- 26 total tests (5 unit + 21 integration)
+- All tests passing in CI and local environments
+- Comprehensive security feature validation
 
 **Key Improvements**
 - Removed fragile cookie round-trip dependency
 - Introduced deterministic `TestAuthHandler`
 - Seeded database for authenticated scenarios
 - Eliminated CI-only flakiness
-
-**Outcome**
-- Tests pass locally and in CI
-- Stable across environments
+- Added security hardening test coverage
 
 ---
 
@@ -171,7 +198,6 @@ Includes protection for:
 - `.NET` `bin`/`obj`
 
 ---
-
 ### 2.9 Test Infrastructure Improvements
 
 **Added**
@@ -184,6 +210,54 @@ Includes protection for:
 - CI-only auth failures
 - Cookie decryption instability
 - Environment-specific behavior
+---
+
+### 2.10 Notes Domain (Core Product Value)
+
+**Implemented**
+- Tenant-scoped note CRUD operations
+- Rich text editing with Draft.js (secure JSON storage, no HTML injection)
+- XSS protection through content sanitization and JSON-based storage
+- Multi-tenant isolation for all note operations
+- Frontend rich text editor with formatting toolbar
+- Secure content rendering without dangerouslySetInnerHTML
+
+**Endpoints**
+| Endpoint | Status | Description |
+|---|---|---|
+| `POST /api/notes` | ✅ Complete | Creates tenant-scoped note |
+| `GET /api/notes` | ✅ Complete | Lists all tenant notes |
+| `GET /api/notes/{id}` | ✅ Complete | Gets specific note by ID |
+| `PUT /api/notes/{id}` | ✅ Complete | Updates existing note |
+| `DELETE /api/notes/{id}` | ✅ Complete | Deletes note |
+
+**Security Features**
+- Content sanitization with smart JSON/HTML detection
+- XSS protection through HtmlSanitizer library
+- Tenant isolation enforced on all operations
+- Input validation and length limits (50,000 characters)
+- Cross-tenant access prevention
+
+**Frontend Features**
+- Rich text editor with Draft.js
+- Formatting toolbar (bold, italic, underline, colors, headings, lists, blockquotes)
+- Secure content storage as JSON
+- Plain text previews in notes list
+- Delete confirmation dialog
+- Real-time editing with save/cancel
+
+**Testing Coverage**
+- 26 integration tests covering all CRUD operations
+- Cross-tenant isolation validation
+- Authentication requirement verification
+- Input validation and error handling
+- Delete functionality testing
+
+**Database Schema**
+- `Notes` table with tenant isolation
+- Foreign key relationships to users and tenants
+- Content stored as sanitized text/JSON
+- Audit timestamps (created/updated)
 
 ---
 
@@ -195,10 +269,12 @@ Includes protection for:
 - Claims-driven authorization
 - Tenant isolation via claims
 - Sensitive files excluded via `.gitignore`
+- Account lockout protection
+- Rate limiting against abuse
+- Audit logging for compliance
+- Input validation and sanitization
 
 **Known Gaps** *(Expected for Phase 1)*
-- No rate limiting
-- No account lockout
 - No email verification
 - No refresh token strategy
 - No external provider integration
@@ -243,33 +319,36 @@ You now have:
 
 - A working multi-tenant auth system
 - Secure user onboarding flow
-- Deterministic integration testing
+- Production-grade security hardening (lockout, rate limiting, audit logging)
+- Complete Notes domain with rich text editing and XSS protection
+- Deterministic integration testing (26 tests)
 - Stable CI pipeline
 - Clean, production-aligned codebase
 - No dev-only shortcuts remaining
 
-> This is a valid production foundation, not just a prototype.
+> This is a valid production foundation with core product functionality, not just a prototype.
 
 ---
 
 ## 7. Recommended Next Slice
 
-### Option A *(Recommended)* — Notes Domain (Core Product Value)
-- Create note entity
-- Attach notes to tenant
-- CRUD endpoints
-- Basic UI
+### Option A *(Recommended)* — Notes Domain Enhancements
+- Note sharing between tenants
+- Note search and filtering
+- Note categories/tags
+- Note attachments (images, files)
 
 ### Option B — Production Hardening
-- Rate limiting
 - Email verification
-- Password reset
-- Audit logging
+- Password reset flow
+- Enhanced audit logging
+- User profile management
 
 ### Option C — Deployment Layer
-- Staging environment
-- Infrastructure config
-- CD pipeline
+- Staging environment setup
+- Infrastructure configuration
+- CD pipeline implementation
+- Production deployment
 
 ---
 
@@ -280,11 +359,14 @@ Phase 1 has successfully delivered:
 - Identity system
 - Tenant architecture
 - Authentication pipeline
+- Complete Notes domain with rich text editing
+- XSS protection and security hardening
 - CI validation
 - Test reliability
 
 The system is now in a state where:
 
+- Core product functionality is available
 - Features can be built safely on top
 - Deployments can be introduced without rework
 - Security risks from dev shortcuts are removed

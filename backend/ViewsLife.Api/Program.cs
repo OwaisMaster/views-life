@@ -4,8 +4,12 @@ using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Domains.Auth.Interfaces;
 using ViewsLife.Api.Domains.Auth.Repositories;
 using ViewsLife.Api.Domains.Auth.Services;
+using ViewsLife.Api.Domains.Notes.Interfaces;
+using ViewsLife.Api.Domains.Notes.Services;
+using ViewsLife.Api.Infrastructure.Logging;
 using ViewsLife.Api.Infrastructure.Options;
 using ViewsLife.Api.Infrastructure.Persistence;
+using ViewsLife.Api.Infrastructure.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,7 +34,15 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 // Registers Auth persistence and domain services.
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<ILockoutService, LockoutService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IAuditLogger, AuditLogger>();
+
+// Registers note services.
+builder.Services.AddScoped<INoteService, NoteService>();
+
+// Registers rate limiting services.
+builder.Services.AddSingleton<RateLimitManager>();
 
 // Adds cookie-based authentication for the application.
 // This enables ASP.NET Core to issue and validate an auth cookie automatically.
@@ -97,6 +109,12 @@ if (app.Environment.IsDevelopment())
 
 // Applies the configured CORS policy before auth and endpoint mapping.
 app.UseCors("FrontendDev");
+
+// Applies auth-specific rate limiting (skip in test environments).
+if (!app.Environment.IsEnvironment("Development"))
+{
+    app.UseAuthRateLimiting();
+}
 
 // Redirects HTTP requests to HTTPS when possible.
 app.UseHttpsRedirection();

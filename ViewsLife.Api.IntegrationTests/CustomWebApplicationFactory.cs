@@ -7,7 +7,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Infrastructure.Persistence;
+using ViewsLife.Api.Infrastructure.RateLimiting;
 
 namespace ViewsLife.Api.IntegrationTests;
 
@@ -63,15 +65,18 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysDirectory))
                 .SetApplicationName("ViewsLife.IntegrationTests");
 
-            // Replaces the application's default authentication behavior for tests.
+            // Adds the test authentication scheme and uses it as the default
+            // authentication scheme for integration tests. This allows [Authorize]
+            // protected endpoints to accept the test headers instead of relying on
+            // cookie authentication, which can be flaky in CI.
             services.AddAuthentication(options =>
-                {
-                    options.DefaultAuthenticateScheme = TestAuthHandler.SchemeName;
-                    options.DefaultChallengeScheme = TestAuthHandler.SchemeName;
-                })
-                .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
-                    TestAuthHandler.SchemeName,
-                    _ => { });
+            {
+                options.DefaultAuthenticateScheme = TestAuthHandler.SchemeName;
+                options.DefaultChallengeScheme = TestAuthHandler.SchemeName;
+            })
+            .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
+                TestAuthHandler.SchemeName,
+                _ => { });
 
             // Builds the service provider and ensures the schema exists.
             var serviceProvider = services.BuildServiceProvider();

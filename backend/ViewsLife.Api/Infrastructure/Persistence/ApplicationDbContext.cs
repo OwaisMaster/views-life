@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ViewsLife.Api.Domains.Auth.Entities;
+using ViewsLife.Api.Domains.Notes.Entities;
 
 namespace ViewsLife.Api.Infrastructure.Persistence;
 
@@ -25,6 +26,12 @@ public sealed class ApplicationDbContext : DbContext
 
     /// Tenant memberships.
     public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
+
+    /// Sign-in attempt tracking for lockout management.
+    public DbSet<SignInAttempt> SignInAttempts => Set<SignInAttempt>();
+
+    /// Tenant-scoped notes.
+    public DbSet<Note> Notes => Set<Note>();
 
     /// Configures entity mappings, constraints, and indexes.
     /// <param name="modelBuilder">EF Core model builder.</param>
@@ -120,6 +127,59 @@ public sealed class ApplicationDbContext : DbContext
                 .WithMany(user => user.TenantMemberships)
                 .HasForeignKey(membership => membership.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SignInAttempt>(entity =>
+        {
+            entity.HasKey(attempt => attempt.Id);
+
+            entity.Property(attempt => attempt.NormalizedEmail)
+                .IsRequired()
+                .HasMaxLength(320);
+
+            entity.Property(attempt => attempt.FailedAttempts)
+                .IsRequired();
+
+            entity.Property(attempt => attempt.LastFailedAttemptUtc)
+                .IsRequired();
+
+            entity.Property(attempt => attempt.LockedUntilUtc);
+
+            entity.HasIndex(attempt => attempt.NormalizedEmail)
+                .IsUnique();
+        });
+
+        modelBuilder.Entity<Note>(entity =>
+        {
+            entity.HasKey(note => note.Id);
+
+            entity.Property(note => note.TenantId)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            entity.Property(note => note.CreatedByUserId)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            entity.Property(note => note.Title)
+                .IsRequired()
+                .HasMaxLength(200);
+
+            entity.Property(note => note.Content)
+                .IsRequired();
+
+            entity.Property(note => note.Visibility)
+                .IsRequired()
+                .HasMaxLength(50)
+                .HasDefaultValue("Private");
+
+            entity.Property(note => note.CreatedAtUtc)
+                .IsRequired();
+
+            entity.Property(note => note.UpdatedAtUtc)
+                .IsRequired();
+
+            entity.HasIndex(note => note.TenantId);
         });
     }
 }
