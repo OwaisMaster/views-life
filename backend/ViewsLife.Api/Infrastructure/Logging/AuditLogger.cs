@@ -55,15 +55,12 @@ public sealed class AuditLogger : IAuditLogger
         string? ipAddress,
         string? details)
     {
-        // Mask email for logging (show only domain)
-        string maskedEmail = MaskEmail(email);
-
         string safeUserId = SanitizeForLog(userId);
-        string safeEmail = SanitizeForLog(maskedEmail);
+        string emailStatus = string.IsNullOrWhiteSpace(email) ? "[not provided]" : "[provided]";
         string safeIpAddress = SanitizeForLog(ipAddress);
         string safeDetails = SanitizeForLog(details);
 
-        var logMessage = $"[AUDIT] {eventType:G} | User: {safeUserId} | Email: {safeEmail} | IP: {safeIpAddress} | Details: {safeDetails}";
+        var logMessage = $"[AUDIT] {eventType:G} | User: {safeUserId} | Email: {emailStatus} | IP: {safeIpAddress} | Details: {safeDetails}";
 
         switch (eventType)
         {
