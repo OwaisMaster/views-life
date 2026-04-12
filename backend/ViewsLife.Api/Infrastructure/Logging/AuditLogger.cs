@@ -56,11 +56,10 @@ public sealed class AuditLogger : IAuditLogger
         string? details)
     {
         string safeUserId = SanitizeForLog(userId);
-        string emailStatus = string.IsNullOrWhiteSpace(email) ? "[not provided]" : "[provided]";
         string safeIpAddress = SanitizeForLog(ipAddress);
         string safeDetails = SanitizeForLog(details);
 
-        var logMessage = $"[AUDIT] {eventType:G} | User: {safeUserId} | Email: {emailStatus} | IP: {safeIpAddress} | Details: {safeDetails}";
+        var logMessage = $"[AUDIT] {eventType:G} | User: {safeUserId} | IP: {safeIpAddress} | Details: {safeDetails}";
 
         switch (eventType)
         {
