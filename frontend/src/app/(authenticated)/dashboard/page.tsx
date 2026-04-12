@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUserOrRedirect } from "@/lib/server/auth";
 
 /**
@@ -43,12 +44,12 @@ export default async function DashboardPage() {
           CRUD flows.
         </p>
         <div className="mt-4">
-          <a
+          <Link
             href="/dashboard/notes"
             className="inline-flex rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             View notes
-          </a>
+          </Link>
         </div>
       </section>
     </div>

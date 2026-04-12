@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Infrastructure.Persistence;
 using ViewsLife.Api.Infrastructure.RateLimiting;
 
@@ -67,7 +68,10 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // Adds the test authentication scheme alongside the default cookie auth.
             // This allows tests to use either cookie authentication (default) or
             // test headers for deterministic authentication testing.
-            services.AddAuthentication()
+            services.AddAuthentication(options =>
+                {
+                    options.DefaultScheme = AuthConstants.AuthScheme;
+                })
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
                     TestAuthHandler.SchemeName,
                     _ => { });

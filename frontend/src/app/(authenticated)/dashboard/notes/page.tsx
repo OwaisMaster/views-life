@@ -10,7 +10,7 @@ function getPlainTextFromDraftContent(content: string): string {
     const parsed = JSON.parse(content);
     if (parsed.blocks && Array.isArray(parsed.blocks)) {
       return parsed.blocks
-        .map((block: any) => block.text || '')
+        .map((block: { text: string }) => block.text || '')
         .join(' ')
         .trim();
     }

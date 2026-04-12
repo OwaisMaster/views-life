@@ -4,7 +4,7 @@ import { buildBackendApiUrl } from "@/lib/api";
 
 export async function GET(
   _request: NextRequest,
-  context: any
+  context: { params: Promise<{ noteId: string }> }
 ): Promise<NextResponse> {
   const { noteId } = await context.params;
   const cookieStore = await cookies();
@@ -35,7 +35,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  context: any
+  context: { params: Promise<{ noteId: string }> }
 ): Promise<NextResponse> {
   const { noteId } = await context.params;
   const cookieStore = await cookies();
@@ -69,7 +69,7 @@ export async function PUT(
 
 export async function DELETE(
   _request: NextRequest,
-  context: any
+  context: { params: Promise<{ noteId: string }> }
 ): Promise<NextResponse> {
   const { noteId } = await context.params;
   const cookieStore = await cookies();
