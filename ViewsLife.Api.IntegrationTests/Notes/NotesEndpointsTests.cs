@@ -2,8 +2,12 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
-using ViewsLife.Api.Domains.Auth.Dtos;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using ViewsLife.Api.Common.Constants;
+using ViewsLife.Api.Domains.Auth.Entities;
 using ViewsLife.Api.Domains.Notes.Dtos;
+using ViewsLife.Api.Infrastructure.Persistence;
 using Xunit;
 
 namespace ViewsLife.Api.IntegrationTests.Notes;
@@ -20,42 +24,30 @@ public sealed class NotesEndpointsTests : IClassFixture<CustomWebApplicationFact
     private HttpClient CreateClient() => _factory.CreateClient(new WebApplicationFactoryClientOptions
     {
         AllowAutoRedirect = false,
-        HandleCookies = true,
+        HandleCookies = false, // Disable cookies since we use test headers
         BaseAddress = new Uri("https://localhost")
     });
 
-    private async Task<HttpClient> CreateAuthenticatedClientAsync(
-        string displayName,
-        string email,
-        string password,
-        string tenantName)
+    private HttpClient CreateAuthenticatedClient(string userId, string tenantId)
     {
         var client = CreateClient();
-
-        var registerRequest = new RegisterRequestDto
-        {
-            DisplayName = displayName,
-            Email = email,
-            Password = password,
-            TenantName = tenantName
-        };
-
-        HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/auth/register",
-            registerRequest);
-
-        response.EnsureSuccessStatusCode();
+        client.DefaultRequestHeaders.Add(TestAuthHandler.UserIdHeader, userId);
+        client.DefaultRequestHeaders.Add(TestAuthHandler.TenantIdHeader, tenantId);
+        client.DefaultRequestHeaders.Add(TestAuthHandler.TenantRoleHeader, "Owner");
+        client.DefaultRequestHeaders.Add(TestAuthHandler.DisplayNameHeader, "Test User");
         return client;
+    }
+
+    private Task<(string userId, string tenantId)> SeedTestDataAsync()
+    {
+        return SeedTestDataAsync(string.Empty, string.Empty);
     }
 
     [Fact]
     public async Task AuthenticatedUser_CanCreateAndReadOwnNote()
     {
-        HttpClient client = await CreateAuthenticatedClientAsync(
-            "Note User",
-            "note.user@example.com",
-            "Password!123",
-            "Note Tenant");
+        var (userId, tenantId) = await SeedTestDataAsync();
+        HttpClient client = CreateAuthenticatedClient(userId, tenantId);
 
         var createRequest = new CreateNoteRequestDto
         {
@@ -87,17 +79,11 @@ public sealed class NotesEndpointsTests : IClassFixture<CustomWebApplicationFact
     [Fact]
     public async Task NoteList_ReturnsOnlyCurrentTenantNotes()
     {
-        HttpClient tenantOneClient = await CreateAuthenticatedClientAsync(
-            "Tenant One User",
-            "tenant.one@example.com",
-            "Password!123",
-            "Tenant One");
+        var (userId1, tenantId1) = await SeedTestDataAsync();
+        var (userId2, tenantId2) = await SeedTestDataAsync("tenant2", "user2");
 
-        HttpClient tenantTwoClient = await CreateAuthenticatedClientAsync(
-            "Tenant Two User",
-            "tenant.two@example.com",
-            "Password!123",
-            "Tenant Two");
+        HttpClient tenantOneClient = CreateAuthenticatedClient(userId1, tenantId1);
+        HttpClient tenantTwoClient = CreateAuthenticatedClient(userId2, tenantId2);
 
         var firstNote = new CreateNoteRequestDto
         {
@@ -136,20 +122,74 @@ public sealed class NotesEndpointsTests : IClassFixture<CustomWebApplicationFact
         notes.Should().NotContain(note => note.Id == createdSecond!.Id);
     }
 
+    private async Task<(string userId, string tenantId)> SeedTestDataAsync(string tenantSuffix = "", string userSuffix = "")
+    {
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        string userId = $"test-user-id{userSuffix}";
+        string tenantId = $"test-tenant-id{tenantSuffix}";
+
+        // Check if already exists
+        if (await dbContext.Set<ApplicationUser>().AnyAsync(u => u.Id == userId))
+        {
+            return (userId, tenantId);
+        }
+
+        // Create test user
+        var user = new ApplicationUser
+        {
+            Id = userId,
+            DisplayName = $"Test User{userSuffix}",
+            Email = $"test{userSuffix}@example.com",
+            NormalizedEmail = $"TEST{userSuffix.ToUpper()}@EXAMPLE.COM",
+            PasswordHash = "hashed-password",
+            AuthProvider = "Local",
+            ProviderSubjectId = $"test{userSuffix}@example.com",
+            IsEmailVerified = true,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        // Create test tenant
+        var tenant = new Tenant
+        {
+            Id = tenantId,
+            Name = $"Test Tenant{tenantSuffix}",
+            Slug = $"test-tenant{tenantSuffix}",
+            OwnerUserId = user.Id,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        // Create tenant membership
+        var membership = new TenantMembership
+        {
+            Id = Guid.NewGuid().ToString(),
+            TenantId = tenant.Id,
+            UserId = user.Id,
+            Role = "Owner",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        dbContext.Add(user);
+        dbContext.Add(tenant);
+        dbContext.Add(membership);
+        await dbContext.SaveChangesAsync();
+
+        return (user.Id, tenant.Id);
+    }
+
     [Fact]
     public async Task CrossTenantNoteAccess_IsNotAllowed()
     {
-        HttpClient tenantOneClient = await CreateAuthenticatedClientAsync(
-            "Tenant One User",
-            "tenant.one2@example.com",
-            "Password!123",
-            "Tenant One 2");
+        var (userId1, tenantId1) = await SeedTestDataAsync();
+        var (userId2, tenantId2) = await SeedTestDataAsync("2", "2");
 
-        HttpClient tenantTwoClient = await CreateAuthenticatedClientAsync(
-            "Tenant Two User",
-            "tenant.two2@example.com",
-            "Password!123",
-            "Tenant Two 2");
+        HttpClient tenantOneClient = CreateAuthenticatedClient(userId1, tenantId1);
+        HttpClient tenantTwoClient = CreateAuthenticatedClient(userId2, tenantId2);
 
         var createRequest = new CreateNoteRequestDto
         {
@@ -188,11 +228,8 @@ public sealed class NotesEndpointsTests : IClassFixture<CustomWebApplicationFact
     [Fact]
     public async Task InvalidPayload_ReturnsBadRequest()
     {
-        HttpClient client = await CreateAuthenticatedClientAsync(
-            "Note Validation User",
-            "note.validation@example.com",
-            "Password!123",
-            "Validation Tenant");
+        var (userId, tenantId) = await SeedTestDataAsync();
+        HttpClient client = CreateAuthenticatedClient(userId, tenantId);
 
         var invalidRequest = new CreateNoteRequestDto
         {
@@ -211,11 +248,8 @@ public sealed class NotesEndpointsTests : IClassFixture<CustomWebApplicationFact
     [Fact]
     public async Task AuthenticatedUser_CanDeleteOwnNote()
     {
-        HttpClient client = await CreateAuthenticatedClientAsync(
-            "Delete User",
-            "delete.user@example.com",
-            "Password!123",
-            "Delete Tenant");
+        var (userId, tenantId) = await SeedTestDataAsync();
+        HttpClient client = CreateAuthenticatedClient(userId, tenantId);
 
         var createRequest = new CreateNoteRequestDto
         {

@@ -65,16 +65,18 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysDirectory))
                 .SetApplicationName("ViewsLife.IntegrationTests");
 
-            // Adds the test authentication scheme alongside the default cookie auth.
-            // This allows tests to use either cookie authentication (default) or
-            // test headers for deterministic authentication testing.
+            // Adds the test authentication scheme and uses it as the default
+            // authentication scheme for integration tests. This allows [Authorize]
+            // protected endpoints to accept the test headers instead of relying on
+            // cookie authentication, which can be flaky in CI.
             services.AddAuthentication(options =>
-                {
-                    options.DefaultScheme = AuthConstants.AuthScheme;
-                })
-                .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
-                    TestAuthHandler.SchemeName,
-                    _ => { });
+            {
+                options.DefaultAuthenticateScheme = TestAuthHandler.SchemeName;
+                options.DefaultChallengeScheme = TestAuthHandler.SchemeName;
+            })
+            .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
+                TestAuthHandler.SchemeName,
+                _ => { });
 
             // Builds the service provider and ensures the schema exists.
             var serviceProvider = services.BuildServiceProvider();
