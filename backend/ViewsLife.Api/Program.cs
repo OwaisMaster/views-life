@@ -98,6 +98,17 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("StagingPolicy", policy =>
+    {
+        policy.WithOrigins("https://views-life.vercel.app/")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // Required for cookie-based auth
+    });
+});
+
 var app = builder.Build();
 
 // Enables Swagger only during development.
