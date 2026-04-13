@@ -53,7 +53,7 @@ builder.Services
         options.Cookie.Name = AuthConstants.AuthCookieName;
         options.Cookie.HttpOnly = true;
         options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
-        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.SameSite = SameSiteMode.Lax;
         options.SlidingExpiration = true;
 
         // Prevents automatic redirect behavior for API endpoints and returns
@@ -102,9 +102,10 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("StagingPolicy", policy =>
     {
-        policy.WithOrigins(builder.Configuration["AllowedOrigins"]!)
+        policy.WithOrigins("https://views-life.vercel.app/")
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .AllowCredentials(); // Required for cookie-based auth
     });
 });
 
