@@ -55,10 +55,12 @@ public sealed class AuditLogger : IAuditLogger
         string? ipAddress,
         string? details)
     {
-        // Mask email for logging (show only domain)
-        string maskedEmail = MaskEmail(email);
+        _ = email; // Intentionally not logged to avoid exposing private account metadata.
+        string safeUserId = SanitizeForLog(userId);
+        string safeIpAddress = SanitizeForLog(ipAddress);
+        string safeDetails = SanitizeForLog(details);
 
-        var logMessage = $"[AUDIT] {eventType:G} | User: {userId} | Email: {maskedEmail} | IP: {ipAddress} | Details: {details}";
+        var logMessage = $"[AUDIT] {eventType:G} | User: {safeUserId} | IP: {safeIpAddress} | Details: {safeDetails}";
 
         switch (eventType)
         {
@@ -84,6 +86,21 @@ public sealed class AuditLogger : IAuditLogger
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Sanitizes a value for plain-text log output to prevent log forging.
+    /// </summary>
+    private static string SanitizeForLog(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "[unknown]";
+        }
+
+        return value
+            .Replace("\r", string.Empty)
+            .Replace("\n", string.Empty);
     }
 
     /// <summary>
