@@ -119,7 +119,8 @@ if (app.Environment.IsDevelopment())
 }
 
 // Applies the configured CORS policy before auth and endpoint mapping.
-app.UseCors("FrontendDev");
+//app.UseCors("FrontendDev");
+app.UseCors("StagingPolicy");
 
 // Applies auth-specific rate limiting (skip in test environments).
 if (!app.Environment.IsEnvironment("Development"))
