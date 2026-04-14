@@ -19,11 +19,11 @@ npm install
 npm run dev
 
 ### Backend
-Run from `backend/`:
+Run from `backend/ViewsLife.Api`:
 
 ```bash
 dotnet restore
-dotnet run
+dotnet run --launch-profile https
 
 ### Infra
 docker compose -f docker-compose.postgres.yml up -d
