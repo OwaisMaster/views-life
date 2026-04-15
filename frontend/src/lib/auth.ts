@@ -51,10 +51,6 @@ import {
   summarizeCookieHeader,
 } from "@/lib/server/auth-debug";
 
-/**
- * Represents the lightweight current-user payload returned by the auth API.
- * This is used to bootstrap frontend auth/session state.
- */
 export interface CurrentUserResponse {
   userId: string;
   displayName: string;
@@ -64,21 +60,6 @@ export interface CurrentUserResponse {
   tenantRole: string;
 }
 
-/**
- * Calls the frontend BFF current-user endpoint.
- *
- * Context:
- * - In the browser, auth cookies are sent automatically.
- * - In SSR, the caller must forward the incoming cookie header manually.
- *
- * Diagnostic behavior:
- * - Logs the resolved frontend auth URL
- * - Logs whether a cookie was forwarded
- * - Logs response status and body snippet on failure
- *
- * @param cookieHeader Optional raw cookie header for SSR requests
- * @returns The current-user response
- */
 export async function fetchCurrentUser(
   cookieHeader?: string
 ): Promise<CurrentUserResponse> {
@@ -94,11 +75,9 @@ export async function fetchCurrentUser(
   const response = await fetch(url, {
     method: "GET",
     headers: {
-      "Content-Type": "application/json",
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     },
     cache: "no-store",
-    credentials: "include",
   });
 
   const responseText = await response.text();

@@ -33,7 +33,7 @@
 //   }
 // }
 //----------------------------------------
-import { cookies } from "next/headers";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { fetchCurrentUser, type CurrentUserResponse } from "@/lib/auth";
 import {
@@ -45,20 +45,18 @@ import {
  * Loads the current authenticated user for a Server Component request.
  *
  * Context:
- * - Reads the incoming browser cookies from the current request.
- * - Forwards them to the frontend BFF auth route.
+ * - Reads the raw incoming browser Cookie header from the current request.
+ * - Forwards that exact header to the frontend BFF auth route.
  * - Returns the authenticated user when available.
  * - Redirects to the public homepage when the user is not authenticated.
  *
- * Diagnostic behavior:
- * - Logs the outgoing auth-bootstrap attempt
- * - Logs the exact status / error path before redirecting
+ * This avoids reconstructing the Cookie header from the cookie store.
  *
  * @returns The authenticated current-user payload
  */
 export async function getCurrentUserOrRedirect(): Promise<CurrentUserResponse> {
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
+  const requestHeaders = await headers();
+  const cookieHeader = requestHeaders.get("cookie") ?? "";
   const cookieSummary = summarizeCookieHeader(cookieHeader);
 
   logAuthDebug("server_auth_helper_start", {
