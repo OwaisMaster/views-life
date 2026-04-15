@@ -32,18 +32,68 @@
 // }
 //-------------------------------------
 import { NextRequest, NextResponse } from "next/server";
-import { buildBackendApiUrl } from "@/lib/api";
 import { createHash } from "node:crypto";
+import { buildBackendApiUrl } from "@/lib/api";
 
 /**
  * Computes a SHA-256 hash for a string.
+ *
+ * @param value Input string
+ * @returns Lowercase SHA-256 hex string
  */
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+/**
+ * Extracts a named cookie value from a raw Cookie header.
+ *
+ * @param cookieHeader Raw Cookie header
+ * @param cookieName Cookie name to extract
+ * @returns Cookie value if found; otherwise null
+ */
+function extractCookieValue(
+  cookieHeader: string,
+  cookieName: string
+): string | null {
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const parts = cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const part of parts) {
+    const separatorIndex = part.indexOf("=");
+
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const name = part.slice(0, separatorIndex);
+    const value = part.slice(separatorIndex + 1);
+
+    if (name === cookieName) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Frontend BFF current-user route.
+ *
+ * Context:
+ * - Reads the raw incoming cookie header from the browser request
+ * - Logs only safe metadata and a hash of the auth cookie value
+ * - Forwards the exact raw Cookie header to the backend
+ */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const cookieHeader = request.headers.get("cookie") ?? "";
+  const authCookieValue = extractCookieValue(cookieHeader, "viewslife_auth");
   const backendUrl = buildBackendApiUrl("/api/auth/me");
 
   console.info(
@@ -54,7 +104,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       backendUrl,
       hasCookie: cookieHeader.length > 0,
       cookieHeaderLength: cookieHeader.length,
-      cookieHeaderHash: sha256(cookieHeader),
+      authCookieFound: Boolean(authCookieValue),
+      authCookieValueLength: authCookieValue?.length ?? 0,
+      authCookieValueHash: authCookieValue ? sha256(authCookieValue) : "empty",
     })
   );
 

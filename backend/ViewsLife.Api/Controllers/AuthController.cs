@@ -181,17 +181,14 @@ public sealed class AuthController : ControllerBase
     CancellationToken cancellationToken)
     {
         string cookieHeader = HttpContext.Request.Headers.Cookie.ToString();
+        string? authCookieValue =
+            CookieDebugHasher.ExtractCookieValue(cookieHeader, AuthConstants.AuthCookieName);
 
         AuthenticateResult authResult =
             await HttpContext.AuthenticateAsync(AuthConstants.AuthScheme);
 
-        string authCookieName = ".AspNetCore.Cookies";
-        string? authCookieValue =
-            CookieDebugHasher.ExtractCookieValue(cookieHeader, authCookieName);
-
         _logger.LogInformation(
-            "Auth diagnostics for /api/auth/me. MachineName={MachineName}, HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}",
-            Environment.MachineName,
+            "Auth diagnostics for /api/auth/me. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}",
             !string.IsNullOrWhiteSpace(cookieHeader),
             cookieHeader.Length,
             !string.IsNullOrWhiteSpace(authCookieValue),
@@ -200,7 +197,9 @@ public sealed class AuthController : ControllerBase
             authResult.Succeeded,
             authResult.None,
             authResult.Failure?.Message,
-            User.Identity?.IsAuthenticated ?? false);
+            User.Identity?.IsAuthenticated ?? false,
+            Environment.MachineName
+        );
 
         string? currentUserId = User.FindFirstValue(AuthConstants.UserIdClaimType);
         string? currentTenantId = User.FindFirstValue(AuthConstants.TenantIdClaimType);
