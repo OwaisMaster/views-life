@@ -31,42 +31,36 @@
 //   });
 // }
 //-------------------------------------
-import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { buildBackendApiUrl } from "@/lib/api";
-import {
-  logAuthDebug,
-  summarizeCookieHeader,
-} from "@/lib/server/auth-debug";
+import { createHash } from "node:crypto";
 
 /**
- * Frontend BFF current-user route.
- *
- * Behavior:
- * - Reads the incoming browser cookies on the Vercel side
- * - Forwards them to the backend /api/auth/me endpoint
- * - Returns the backend JSON response and status as-is
- *
- * Diagnostic behavior:
- * - Logs cookie presence from the incoming request
- * - Logs the exact backend URL being called
- * - Logs backend status and a safe response preview
+ * Computes a SHA-256 hash for a string.
  */
-export async function GET(): Promise<NextResponse> {
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
-  const cookieSummary = summarizeCookieHeader(cookieHeader);
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const cookieHeader = request.headers.get("cookie") ?? "";
   const backendUrl = buildBackendApiUrl("/api/auth/me");
 
-  logAuthDebug("bff_me_request_start", {
-    backendUrl,
-    ...cookieSummary,
-  });
+  console.info(
+    JSON.stringify({
+      scope: "auth-debug",
+      event: "bff_me_request_start",
+      timestamp: new Date().toISOString(),
+      backendUrl,
+      hasCookie: cookieHeader.length > 0,
+      cookieHeaderLength: cookieHeader.length,
+      cookieHeaderHash: sha256(cookieHeader),
+    })
+  );
 
   const backendResponse = await fetch(backendUrl, {
     method: "GET",
     headers: {
-      "Content-Type": "application/json",
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     },
     cache: "no-store",
@@ -74,13 +68,17 @@ export async function GET(): Promise<NextResponse> {
 
   const responseText = await backendResponse.text();
 
-  logAuthDebug("bff_me_response", {
-    backendUrl,
-    ...cookieSummary,
-    backendStatus: backendResponse.status,
-    backendOk: backendResponse.ok,
-    responsePreview: responseText.slice(0, 500),
-  });
+  console.info(
+    JSON.stringify({
+      scope: "auth-debug",
+      event: "bff_me_response",
+      timestamp: new Date().toISOString(),
+      backendUrl,
+      status: backendResponse.status,
+      ok: backendResponse.ok,
+      responsePreview: responseText.slice(0, 300),
+    })
+  );
 
   return new NextResponse(responseText, {
     status: backendResponse.status,

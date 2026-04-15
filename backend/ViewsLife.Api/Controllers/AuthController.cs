@@ -6,6 +6,8 @@ using ViewsLife.Api.Common.Constants;
 using ViewsLife.Api.Domains.Auth.Dtos;
 using ViewsLife.Api.Domains.Auth.Interfaces;
 using ViewsLife.Api.Infrastructure.Logging;
+using Microsoft.Extensions.Logging;
+using ViewsLife.Api.Common.Security;
 
 namespace ViewsLife.Api.Controllers;
 
@@ -176,40 +178,32 @@ public sealed class AuthController : ControllerBase
     [ProducesResponseType(typeof(CurrentUserResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<CurrentUserResponseDto>> Me(
-        CancellationToken cancellationToken)
+    CancellationToken cancellationToken)
     {
-        // Read the raw Cookie header only to determine presence/length.
-        // Do NOT log the actual cookie value.
         string cookieHeader = HttpContext.Request.Headers.Cookie.ToString();
 
-        // Force an explicit authentication evaluation for the configured cookie scheme.
-        // This helps diagnose whether ASP.NET can validate the auth cookie.
         AuthenticateResult authResult =
             await HttpContext.AuthenticateAsync(AuthConstants.AuthScheme);
 
-        // Log a structured diagnostic event for this request.
+        string authCookieName = ".AspNetCore.Cookies";
+        string? authCookieValue =
+            CookieDebugHasher.ExtractCookieValue(cookieHeader, authCookieName);
+
         _logger.LogInformation(
-            "Auth /me diagnostics. Path={Path}, HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}, ClientIp={ClientIp}",
-            HttpContext.Request.Path,
+            "Auth diagnostics for /api/auth/me. MachineName={MachineName}, HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}",
+            Environment.MachineName,
             !string.IsNullOrWhiteSpace(cookieHeader),
             cookieHeader.Length,
+            !string.IsNullOrWhiteSpace(authCookieValue),
+            authCookieValue?.Length ?? 0,
+            CookieDebugHasher.ComputeSha256(authCookieValue),
             authResult.Succeeded,
             authResult.None,
             authResult.Failure?.Message,
-            User.Identity?.IsAuthenticated ?? false,
-            User.HasClaim(c => c.Type == AuthConstants.UserIdClaimType),
-            User.HasClaim(c => c.Type == AuthConstants.TenantIdClaimType),
-            GetClientIp());
+            User.Identity?.IsAuthenticated ?? false);
 
         string? currentUserId = User.FindFirstValue(AuthConstants.UserIdClaimType);
         string? currentTenantId = User.FindFirstValue(AuthConstants.TenantIdClaimType);
-
-         // Log the resolved identity values that the action sees after authorization.
-        _logger.LogInformation(
-            "Auth /me resolved claims. CurrentUserId={CurrentUserId}, CurrentTenantId={CurrentTenantId}, DisplayName={DisplayName}",
-            currentUserId,
-            currentTenantId,
-            User.Identity?.Name);
 
         CurrentUserResponseDto response =
             await _authService.GetCurrentUserAsync(
@@ -294,14 +288,14 @@ public sealed class AuthController : ControllerBase
     private async Task IssueAuthCookieAsync(AuthResponseDto response)
     {
         var claims = new List<Claim>
-        {
-            new(AuthConstants.UserIdClaimType, response.UserId),
-            new(AuthConstants.TenantIdClaimType, response.TenantId),
-            new(AuthConstants.TenantRoleClaimType, response.TenantRole),
-            new(ClaimTypes.NameIdentifier, response.UserId),
-            new(ClaimTypes.Name, response.DisplayName),
-            new("auth_provider", response.AuthProvider)
-        };
+    {
+        new(AuthConstants.UserIdClaimType, response.UserId),
+        new(AuthConstants.TenantIdClaimType, response.TenantId),
+        new(AuthConstants.TenantRoleClaimType, response.TenantRole),
+        new(ClaimTypes.NameIdentifier, response.UserId),
+        new(ClaimTypes.Name, response.DisplayName),
+        new("auth_provider", response.AuthProvider)
+    };
 
         var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
         var principal = new ClaimsPrincipal(identity);
@@ -315,5 +309,25 @@ public sealed class AuthController : ControllerBase
                 AllowRefresh = true,
                 IssuedUtc = DateTimeOffset.UtcNow
             });
+
+        if (HttpContext.Response.Headers.TryGetValue("Set-Cookie", out var setCookieHeaders))
+        {
+            foreach (string setCookieHeader in setCookieHeaders)
+            {
+                var extracted = CookieDebugHasher.ExtractFromSetCookie(setCookieHeader);
+
+                if (extracted is null)
+                {
+                    continue;
+                }
+
+                _logger.LogInformation(
+                    "Issued auth cookie. MachineName={MachineName}, CookieName={CookieName}, CookieValueLength={CookieValueLength}, CookieValueHash={CookieValueHash}",
+                    Environment.MachineName,
+                    extracted.Value.Name,
+                    extracted.Value.Value.Length,
+                    CookieDebugHasher.ComputeSha256(extracted.Value.Value));
+            }
+        }
     }
 }

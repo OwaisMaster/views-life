@@ -128,6 +128,14 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+var logger = app.Services.GetRequiredService<ILoggerFactory>()
+    .CreateLogger("ViewsLife.DataProtection");
+
+logger.LogInformation(
+    "DataProtection path resolved to {Path}. FilesPresent={FilesPresent}",
+    dataProtectionKeysPath,
+    string.Join(", ", Directory.GetFiles(dataProtectionKeysPath).Select(Path.GetFileName)));
+
 // Enables Swagger only during development.
 if (app.Environment.IsDevelopment())
 {
