@@ -17,6 +17,48 @@ using ViewsLife.Api.Common.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// var dataProtectionKeysPath =
+//     builder.Environment.IsDevelopment()
+//         ? Path.Combine(builder.Environment.ContentRootPath, ".aspnet", "DataProtection-Keys")
+//         : Environment.GetEnvironmentVariable("DATA_PROTECTION_KEYS_PATH")
+//             ?? throw new InvalidOperationException(
+//                 "DATA_PROTECTION_KEYS_PATH must be configured for non-development environments.");
+
+// Directory.CreateDirectory(dataProtectionKeysPath);
+
+// builder.Services
+//     .AddDataProtection()
+//     .SetApplicationName("ViewsLife")
+//     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+
+// // Adds cookie-based authentication for the application.
+// // This enables ASP.NET Core to issue and validate an auth cookie automatically.
+// builder.Services
+//     .AddAuthentication(AuthConstants.AuthScheme)
+//     .AddCookie(AuthConstants.AuthScheme, options =>
+//     {
+//         options.Cookie.Name = AuthConstants.AuthCookieName;
+//         options.Cookie.HttpOnly = true;
+//         options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+//         options.Cookie.SameSite = SameSiteMode.Lax;
+//         options.SlidingExpiration = true;
+
+//         // Prevents automatic redirect behavior for API endpoints and returns
+//         // proper HTTP status codes instead.
+//         options.Events = new CookieAuthenticationEvents
+//         {
+//             OnRedirectToLogin = context =>
+//             {
+//                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+//                 return Task.CompletedTask;
+//             },
+//             OnRedirectToAccessDenied = context =>
+//             {
+//                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
+//                 return Task.CompletedTask;
+//             }
+//         };
+//     });
 var dataProtectionKeysPath =
     builder.Environment.IsDevelopment()
         ? Path.Combine(builder.Environment.ContentRootPath, ".aspnet", "DataProtection-Keys")
@@ -26,10 +68,59 @@ var dataProtectionKeysPath =
 
 Directory.CreateDirectory(dataProtectionKeysPath);
 
+// Configure a stable Data Protection key ring.
+// This is required so the cookie ticket can be protected/unprotected consistently.
 builder.Services
     .AddDataProtection()
     .SetApplicationName("ViewsLife")
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+
+// Register cookie authentication using the app's auth scheme.
+builder.Services
+    .AddAuthentication(AuthConstants.AuthScheme)
+    .AddCookie(AuthConstants.AuthScheme, options =>
+    {
+        options.Cookie.Name = AuthConstants.AuthCookieName;
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.Path = "/";
+        options.SlidingExpiration = true;
+
+        // Return status codes for API endpoints instead of redirecting HTML clients.
+        options.Events = new CookieAuthenticationEvents
+        {
+            OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            },
+            OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            }
+        };
+    });
+
+// Configure the cookie ticket protector via DI without calling BuildServiceProvider().
+// TicketDataFormat is the type used to protect/unprotect the cookie ticket.
+builder.Services
+    .AddOptions<CookieAuthenticationOptions>(AuthConstants.AuthScheme)
+    .PostConfigure<IDataProtectionProvider>((options, dataProtectionProvider) =>
+    {
+        var protector = dataProtectionProvider.CreateProtector(
+            "Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationMiddleware",
+            AuthConstants.AuthScheme,
+            "v2");
+
+        options.TicketDataFormat = new TicketDataFormat(protector);
+    });
+
+builder.Services.AddAuthorization();
+
+
+
 
 // Binds strongly typed configuration objects so the application can access
 // external settings through validated option classes instead of raw strings.
@@ -61,35 +152,6 @@ builder.Services.AddScoped<INoteService, NoteService>();
 
 // Registers rate limiting services.
 builder.Services.AddSingleton<RateLimitManager>();
-
-// Adds cookie-based authentication for the application.
-// This enables ASP.NET Core to issue and validate an auth cookie automatically.
-builder.Services
-    .AddAuthentication(AuthConstants.AuthScheme)
-    .AddCookie(AuthConstants.AuthScheme, options =>
-    {
-        options.Cookie.Name = AuthConstants.AuthCookieName;
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
-        options.Cookie.SameSite = SameSiteMode.Lax;
-        options.SlidingExpiration = true;
-
-        // Prevents automatic redirect behavior for API endpoints and returns
-        // proper HTTP status codes instead.
-        options.Events = new CookieAuthenticationEvents
-        {
-            OnRedirectToLogin = context =>
-            {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                return Task.CompletedTask;
-            },
-            OnRedirectToAccessDenied = context =>
-            {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                return Task.CompletedTask;
-            }
-        };
-    });
 
 // Adds authorization services so [Authorize] can be used on endpoints.
 builder.Services.AddAuthorization();
