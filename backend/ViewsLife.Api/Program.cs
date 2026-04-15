@@ -11,8 +11,24 @@ using ViewsLife.Api.Infrastructure.Options;
 using ViewsLife.Api.Infrastructure.Persistence;
 using ViewsLife.Api.Infrastructure.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
+using System.IO;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var dataProtectionKeysPath =
+    builder.Environment.IsDevelopment()
+        ? Path.Combine(builder.Environment.ContentRootPath, ".aspnet", "DataProtection-Keys")
+        : Environment.GetEnvironmentVariable("DATA_PROTECTION_KEYS_PATH")
+            ?? throw new InvalidOperationException(
+                "DATA_PROTECTION_KEYS_PATH must be configured for non-development environments.");
+
+Directory.CreateDirectory(dataProtectionKeysPath);
+
+builder.Services
+    .AddDataProtection()
+    .SetApplicationName("ViewsLife")
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
 
 // Binds strongly typed configuration objects so the application can access
 // external settings through validated option classes instead of raw strings.
