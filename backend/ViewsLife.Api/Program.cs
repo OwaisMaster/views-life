@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Authentication;
 using System.IO;
 using Microsoft.AspNetCore.DataProtection;
 using ViewsLife.Api.Common.Security;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -105,17 +106,17 @@ builder.Services
 
 // Configure the cookie ticket protector via DI without calling BuildServiceProvider().
 // TicketDataFormat is the type used to protect/unprotect the cookie ticket.
-builder.Services
-    .AddOptions<CookieAuthenticationOptions>(AuthConstants.AuthScheme)
-    .PostConfigure<IDataProtectionProvider>((options, dataProtectionProvider) =>
-    {
-        var protector = dataProtectionProvider.CreateProtector(
-            "Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationMiddleware",
-            AuthConstants.AuthScheme,
-            "v2");
+// builder.Services
+//     .AddOptions<CookieAuthenticationOptions>(AuthConstants.AuthScheme)
+//     .PostConfigure<IDataProtectionProvider>((options, dataProtectionProvider) =>
+//     {
+//         var protector = dataProtectionProvider.CreateProtector(
+//             "Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationMiddleware",
+//             AuthConstants.AuthScheme,
+//             "v2");
 
-        options.TicketDataFormat = new TicketDataFormat(protector);
-    });
+//         options.TicketDataFormat = new TicketDataFormat(protector);
+//     });
 
 builder.Services.AddAuthorization();
 
@@ -191,8 +192,23 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+
 var logger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("ViewsLife.DataProtection");
+
+var cookieOptionsMonitor = app.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>();
+var activeCookieOptions = cookieOptionsMonitor.Get(AuthConstants.AuthScheme);
+
+logger.LogInformation(
+    "Cookie auth runtime options. Scheme={Scheme}, CookieName={CookieName}, CookiePath={CookiePath}, SameSite={SameSite}, SecurePolicy={SecurePolicy}, SlidingExpiration={SlidingExpiration}, TicketDataFormatType={TicketDataFormatType}",
+    AuthConstants.AuthScheme,
+    activeCookieOptions.Cookie.Name,
+    activeCookieOptions.Cookie.Path,
+    activeCookieOptions.Cookie.SameSite,
+    activeCookieOptions.Cookie.SecurePolicy,
+    activeCookieOptions.SlidingExpiration,
+    activeCookieOptions.TicketDataFormat?.GetType().FullName ?? "[null]"
+);
 
 logger.LogInformation(
     "DataProtection path resolved to {Path}. FilesPresent={FilesPresent}",
@@ -222,9 +238,15 @@ app.Use(async (context, next) =>
 {
     if (context.Request.Path.StartsWithSegments("/api/auth/me"))
     {
-        ILogger logger = context.RequestServices
+        ILogger authLogger = context.RequestServices
             .GetRequiredService<ILoggerFactory>()
             .CreateLogger("ViewsLife.AuthDiagnostics");
+
+        var optionsMonitor = context.RequestServices
+            .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>();
+
+        CookieAuthenticationOptions cookieOptions =
+            optionsMonitor.Get(AuthConstants.AuthScheme);
 
         string cookieHeader = context.Request.Headers.Cookie.ToString();
         string? authCookieValue =
@@ -233,8 +255,8 @@ app.Use(async (context, next) =>
         AuthenticateResult authResult =
             await context.AuthenticateAsync(AuthConstants.AuthScheme);
 
-        logger.LogInformation(
-            "Auth diagnostics for {Path}. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}",
+        authLogger.LogInformation(
+            "Auth diagnostics for {Path}. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureType={AuthFailureType}, AuthFailureMessage={AuthFailureMessage}, AuthFailureInnerType={AuthFailureInnerType}, AuthFailureInnerMessage={AuthFailureInnerMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}, TicketDataFormatType={TicketDataFormatType}",
             context.Request.Path,
             !string.IsNullOrWhiteSpace(cookieHeader),
             cookieHeader.Length,
@@ -243,10 +265,40 @@ app.Use(async (context, next) =>
             CookieDebugHasher.ComputeSha256(authCookieValue),
             authResult.Succeeded,
             authResult.None,
+            authResult.Failure?.GetType().FullName,
             authResult.Failure?.Message,
+            authResult.Failure?.InnerException?.GetType().FullName,
+            authResult.Failure?.InnerException?.Message,
             context.User.Identity?.IsAuthenticated ?? false,
-            Environment.MachineName
+            Environment.MachineName,
+            cookieOptions.TicketDataFormat?.GetType().FullName ?? "[null]"
         );
+
+        if (!string.IsNullOrWhiteSpace(authCookieValue))
+        {
+            try
+            {
+                AuthenticationTicket? ticket =
+                    cookieOptions.TicketDataFormat.Unprotect(authCookieValue);
+
+                authLogger.LogInformation(
+                    "Manual ticket unprotect result. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}",
+                    ticket is null,
+                    ticket?.Principal?.Identity?.IsAuthenticated ?? false,
+                    ticket?.Principal?.Claims?.Count() ?? 0
+                );
+            }
+            catch (Exception ex)
+            {
+                authLogger.LogError(
+                    ex,
+                    "Manual ticket unprotect threw. ExceptionType={ExceptionType}, InnerExceptionType={InnerExceptionType}, InnerExceptionMessage={InnerExceptionMessage}",
+                    ex.GetType().FullName,
+                    ex.InnerException?.GetType().FullName,
+                    ex.InnerException?.Message
+                );
+            }
+        }
     }
 
     await next();
