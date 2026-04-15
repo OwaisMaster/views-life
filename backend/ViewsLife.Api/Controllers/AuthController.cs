@@ -17,16 +17,19 @@ public sealed class AuthController : ControllerBase
     private readonly IAuthService _authService;
     private readonly IAuditLogger _auditLogger;
     private readonly IWebHostEnvironment _environment;
+    private readonly ILogger<AuthController> _logger;
 
     /// Creates a new auth controller instance.
     public AuthController(
         IAuthService authService,
         IAuditLogger auditLogger,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        ILogger<AuthController> logger)
     {
         _authService = authService;
         _auditLogger = auditLogger;
         _environment = environment;
+        _logger = logger;
     }
 
     /// Registers a new local account and bootstraps its tenant.
@@ -168,15 +171,45 @@ public sealed class AuthController : ControllerBase
     /// Returns the current authenticated user and tenant context.
     /// Route: GET /api/auth/me
     /// <returns>Current user payload.</returns>
-    [Authorize]
+    [Authorize(AuthenticationSchemes = AuthConstants.AuthScheme)]
     [HttpGet("me")]
     [ProducesResponseType(typeof(CurrentUserResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<CurrentUserResponseDto>> Me(
         CancellationToken cancellationToken)
     {
+        // Read the raw Cookie header only to determine presence/length.
+        // Do NOT log the actual cookie value.
+        string cookieHeader = HttpContext.Request.Headers.Cookie.ToString();
+
+        // Force an explicit authentication evaluation for the configured cookie scheme.
+        // This helps diagnose whether ASP.NET can validate the auth cookie.
+        AuthenticateResult authResult =
+            await HttpContext.AuthenticateAsync(AuthConstants.AuthScheme);
+
+        // Log a structured diagnostic event for this request.
+        _logger.LogInformation(
+            "Auth /me diagnostics. Path={Path}, HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}, ClientIp={ClientIp}",
+            HttpContext.Request.Path,
+            !string.IsNullOrWhiteSpace(cookieHeader),
+            cookieHeader.Length,
+            authResult.Succeeded,
+            authResult.None,
+            authResult.Failure?.Message,
+            User.Identity?.IsAuthenticated ?? false,
+            User.HasClaim(c => c.Type == AuthConstants.UserIdClaimType),
+            User.HasClaim(c => c.Type == AuthConstants.TenantIdClaimType),
+            GetClientIp());
+
         string? currentUserId = User.FindFirstValue(AuthConstants.UserIdClaimType);
         string? currentTenantId = User.FindFirstValue(AuthConstants.TenantIdClaimType);
+
+         // Log the resolved identity values that the action sees after authorization.
+        _logger.LogInformation(
+            "Auth /me resolved claims. CurrentUserId={CurrentUserId}, CurrentTenantId={CurrentTenantId}, DisplayName={DisplayName}",
+            currentUserId,
+            currentTenantId,
+            User.Identity?.Name);
 
         CurrentUserResponseDto response =
             await _authService.GetCurrentUserAsync(

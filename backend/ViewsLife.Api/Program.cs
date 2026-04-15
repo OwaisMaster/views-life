@@ -10,6 +10,7 @@ using ViewsLife.Api.Infrastructure.Logging;
 using ViewsLife.Api.Infrastructure.Options;
 using ViewsLife.Api.Infrastructure.Persistence;
 using ViewsLife.Api.Infrastructure.RateLimiting;
+using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -127,6 +128,40 @@ if (!app.Environment.IsEnvironment("Development"))
 {
     app.UseAuthRateLimiting();
 }
+
+// Temporary staging-only auth diagnostics.
+// Place this after exception handling / forwarded headers, but before endpoint mapping.
+app.Use(async (context, next) =>
+{
+    // Only log the current-user endpoint to keep noise low.
+    if (context.Request.Path.StartsWithSegments("/api/auth/me"))
+    {
+        // Create a structured logger for auth diagnostics.
+        ILogger logger = context.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("ViewsLife.AuthDiagnostics");
+
+        // Read the raw Cookie header safely without printing the full value.
+        string cookieHeader = context.Request.Headers.Cookie.ToString();
+
+        // Ask ASP.NET Core to authenticate the current request using the default scheme.
+        AuthenticateResult authResult = await context.AuthenticateAsync();
+
+        logger.LogInformation(
+            "Auth diagnostics for {Path}. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}",
+            context.Request.Path,
+            !string.IsNullOrWhiteSpace(cookieHeader),
+            cookieHeader.Length,
+            authResult.Succeeded,
+            authResult.None,
+            authResult.Failure?.Message,
+            context.User.Identity?.IsAuthenticated ?? false,
+            Environment.MachineName
+        );
+    }
+
+    await next();
+});
 
 // Redirects HTTP requests to HTTPS when possible.
 app.UseHttpsRedirection();
