@@ -13,6 +13,7 @@ using ViewsLife.Api.Infrastructure.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using System.IO;
 using Microsoft.AspNetCore.DataProtection;
+using ViewsLife.Api.Common.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -157,25 +158,27 @@ if (!app.Environment.IsEnvironment("Development"))
 // Place this after exception handling / forwarded headers, but before endpoint mapping.
 app.Use(async (context, next) =>
 {
-    // Only log the current-user endpoint to keep noise low.
     if (context.Request.Path.StartsWithSegments("/api/auth/me"))
     {
-        // Create a structured logger for auth diagnostics.
         ILogger logger = context.RequestServices
             .GetRequiredService<ILoggerFactory>()
             .CreateLogger("ViewsLife.AuthDiagnostics");
 
-        // Read the raw Cookie header safely without printing the full value.
         string cookieHeader = context.Request.Headers.Cookie.ToString();
+        string? authCookieValue =
+            CookieDebugHasher.ExtractCookieValue(cookieHeader, AuthConstants.AuthCookieName);
 
-        // Ask ASP.NET Core to authenticate the current request using the default scheme.
-        AuthenticateResult authResult = await context.AuthenticateAsync();
+        AuthenticateResult authResult =
+            await context.AuthenticateAsync(AuthConstants.AuthScheme);
 
         logger.LogInformation(
-            "Auth diagnostics for {Path}. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}",
+            "Auth diagnostics for {Path}. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}",
             context.Request.Path,
             !string.IsNullOrWhiteSpace(cookieHeader),
             cookieHeader.Length,
+            !string.IsNullOrWhiteSpace(authCookieValue),
+            authCookieValue?.Length ?? 0,
+            CookieDebugHasher.ComputeSha256(authCookieValue),
             authResult.Succeeded,
             authResult.None,
             authResult.Failure?.Message,
