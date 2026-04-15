@@ -102,7 +102,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("StagingPolicy", policy =>
     {
-        policy.WithOrigins("https://views-life.vercel.app/")
+        policy.WithOrigins("https://views-life.vercel.app")
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials(); // Required for cookie-based auth

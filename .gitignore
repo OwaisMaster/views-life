@@ -6,6 +6,7 @@ Thumbs.db
 .vscode/
 .idea/
 node_modules
+bootstrap.ps1
 
 # --- Logs ---
 *.log
