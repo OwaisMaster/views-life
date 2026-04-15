@@ -1,27 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildBackendApiUrl } from "@/lib/api";
-import { appendBackendSetCookieHeader } from "@/lib/server/cookies";
+import { appendBackendSetCookieHeaders } from "@/lib/server/cookies";
 
 /**
- * Frontend BFF registration route.
+ * Frontend BFF register route.
  *
- * Behavior:
- * - Accepts browser form POST
- * - Forwards JSON to backend registration endpoint
- * - On success:
- *   - forwards backend auth cookie
- *   - redirects to /dashboard
- * - On failure:
- *   - redirects back to /register with a friendly error code
+ * Context:
+ * - Forwards the browser form submission to the backend register endpoint.
+ * - On success, forwards all backend Set-Cookie headers to the browser.
+ * - Redirects the user into the authenticated area.
+ *
+ * Dependency:
+ * - Requires a runtime that supports fetch Response headers.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const formData = await request.formData();
 
   const payload = {
-    displayName: String(formData.get("displayName") ?? ""),
-    tenantName: String(formData.get("tenantName") ?? ""),
     email: String(formData.get("email") ?? ""),
     password: String(formData.get("password") ?? ""),
+    displayName: String(formData.get("displayName") ?? ""),
   };
 
   const backendResponse = await fetch(buildBackendApiUrl("/api/auth/register"), {
@@ -34,32 +32,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
 
   if (!backendResponse.ok) {
-    const responseText = await backendResponse.text();
-
-    let errorCode = "registration_failed";
-
-    // Matches the current backend behavior where duplicate email returns 400
-    // with a message containing this text.
-    if (responseText.includes("already exists")) {
-      errorCode = "email_exists";
-    } else if (backendResponse.status === 400) {
-      errorCode = "invalid_input";
-    }
-
     const redirectUrl = new URL("/register", request.url);
-    redirectUrl.searchParams.set("error", errorCode);
+    redirectUrl.searchParams.set("error", "registration_failed");
 
     return NextResponse.redirect(redirectUrl, { status: 303 });
   }
+
+  // Extract all Set-Cookie headers safely from the backend response.
+  // Some runtimes expose getSetCookie(); fallback keeps compatibility.
+  const setCookieHeaders =
+    typeof backendResponse.headers.getSetCookie === "function"
+      ? backendResponse.headers.getSetCookie()
+      : (() => {
+          const singleHeader = backendResponse.headers.get("set-cookie");
+
+          return singleHeader ? [singleHeader] : [];
+        })();
 
   const nextResponse = NextResponse.redirect(new URL("/dashboard", request.url), {
     status: 303,
   });
 
-  appendBackendSetCookieHeader(
-    nextResponse,
-    backendResponse.headers.get("set-cookie")
-  );
+  appendBackendSetCookieHeaders(nextResponse, setCookieHeaders);
 
   return nextResponse;
 }
