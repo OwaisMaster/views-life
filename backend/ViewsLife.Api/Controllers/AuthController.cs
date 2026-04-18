@@ -8,6 +8,8 @@ using ViewsLife.Api.Domains.Auth.Interfaces;
 using ViewsLife.Api.Infrastructure.Logging;
 using Microsoft.Extensions.Logging;
 using ViewsLife.Api.Common.Security;
+using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace ViewsLife.Api.Controllers;
 
@@ -20,18 +22,21 @@ public sealed class AuthController : ControllerBase
     private readonly IAuditLogger _auditLogger;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<AuthController> _logger;
+    private readonly IOptionsMonitor<CookieAuthenticationOptions> _cookieOptionsMonitor;
 
     /// Creates a new auth controller instance.
     public AuthController(
         IAuthService authService,
         IAuditLogger auditLogger,
         IWebHostEnvironment environment,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        IOptionsMonitor<CookieAuthenticationOptions> cookieOptionsMonitor)
     {
         _authService = authService;
         _auditLogger = auditLogger;
         _environment = environment;
         _logger = logger;
+        _cookieOptionsMonitor = cookieOptionsMonitor;
     }
 
     /// Registers a new local account and bootstraps its tenant.
@@ -282,11 +287,15 @@ public sealed class AuthController : ControllerBase
         return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     }
 
-    /// Issues the application auth cookie using the supplied session context.
-    /// <param name="response">Authenticated session payload.</param>
-    private async Task IssueAuthCookieAsync(AuthResponseDto response)
-    {
-        var claims = new List<Claim>
+    /// <summary>
+/// Issues the application auth cookie using the supplied session context.
+/// Also performs an immediate local unprotect test against the just-issued cookie
+/// so we can determine whether the backend can read its own cookie in the same request.
+/// </summary>
+/// <param name="response">Authenticated session payload.</param>
+private async Task IssueAuthCookieAsync(AuthResponseDto response)
+{
+    var claims = new List<Claim>
     {
         new(AuthConstants.UserIdClaimType, response.UserId),
         new(AuthConstants.TenantIdClaimType, response.TenantId),
@@ -296,37 +305,76 @@ public sealed class AuthController : ControllerBase
         new("auth_provider", response.AuthProvider)
     };
 
-        var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
-        var principal = new ClaimsPrincipal(identity);
+    var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
+    var principal = new ClaimsPrincipal(identity);
 
-        await HttpContext.SignInAsync(
-            AuthConstants.AuthScheme,
-            principal,
-            new AuthenticationProperties
-            {
-                IsPersistent = true,
-                AllowRefresh = true,
-                IssuedUtc = DateTimeOffset.UtcNow
-            });
-
-        if (HttpContext.Response.Headers.TryGetValue("Set-Cookie", out var setCookieHeaders))
+    await HttpContext.SignInAsync(
+        AuthConstants.AuthScheme,
+        principal,
+        new AuthenticationProperties
         {
-            foreach (string setCookieHeader in setCookieHeaders)
-            {
-                var extracted = CookieDebugHasher.ExtractFromSetCookie(setCookieHeader);
+            IsPersistent = true,
+            AllowRefresh = true,
+            IssuedUtc = DateTimeOffset.UtcNow
+        });
 
-                if (extracted is null)
-                {
-                    continue;
-                }
+    // Log and test the exact auth cookie that was just written to the response.
+    if (HttpContext.Response.Headers.TryGetValue("Set-Cookie", out var setCookieHeaders))
+    {
+        foreach (string setCookieHeader in setCookieHeaders)
+        {
+            var extracted = CookieDebugHasher.ExtractFromSetCookie(setCookieHeader);
+
+            if (extracted is null)
+            {
+                continue;
+            }
+
+            // Only inspect the app auth cookie, not unrelated cookies.
+            if (!string.Equals(
+                    extracted.Value.Name,
+                    AuthConstants.AuthCookieName,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var cookieOptions = _cookieOptionsMonitor.Get(AuthConstants.AuthScheme);
+
+            _logger.LogInformation(
+                "Issued auth cookie. MachineName={MachineName}, CookieName={CookieName}, CookieValueLength={CookieValueLength}, CookieValueHash={CookieValueHash}, TicketDataFormatType={TicketDataFormatType}",
+                Environment.MachineName,
+                extracted.Value.Name,
+                extracted.Value.Value.Length,
+                CookieDebugHasher.ComputeSha256(extracted.Value.Value),
+                cookieOptions.TicketDataFormat?.GetType().FullName ?? "[null]"
+            );
+
+            try
+            {
+                AuthenticationTicket? ticket =
+                    cookieOptions.TicketDataFormat.Unprotect(extracted.Value.Value);
 
                 _logger.LogInformation(
-                    "Issued auth cookie. MachineName={MachineName}, CookieName={CookieName}, CookieValueLength={CookieValueLength}, CookieValueHash={CookieValueHash}",
-                    Environment.MachineName,
-                    extracted.Value.Name,
-                    extracted.Value.Value.Length,
-                    CookieDebugHasher.ComputeSha256(extracted.Value.Value));
+                    "Immediate issued-cookie unprotect result. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}",
+                    ticket is null,
+                    ticket?.Principal?.Identity?.IsAuthenticated ?? false,
+                    ticket?.Principal?.Claims?.Count() ?? 0,
+                    ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.UserIdClaimType) ?? false,
+                    ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.TenantIdClaimType) ?? false
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Immediate issued-cookie unprotect threw. ExceptionType={ExceptionType}, InnerExceptionType={InnerExceptionType}, InnerExceptionMessage={InnerExceptionMessage}",
+                    ex.GetType().FullName,
+                    ex.InnerException?.GetType().FullName,
+                    ex.InnerException?.Message
+                );
             }
         }
     }
+}
 }
