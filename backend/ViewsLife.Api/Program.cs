@@ -249,51 +249,67 @@ app.Use(async (context, next) =>
         CookieAuthenticationOptions cookieOptions =
             optionsMonitor.Get(AuthConstants.AuthScheme);
 
-        string cookieHeader = context.Request.Headers.Cookie.ToString();
-        string? authCookieValue =
-            CookieDebugHasher.ExtractCookieValue(cookieHeader, AuthConstants.AuthCookieName);
+        string rawCookieHeader = context.Request.Headers.Cookie.ToString();
+
+        // Raw extraction from the Cookie header as currently sent over the wire.
+        string? rawExtractedCookieValue =
+            CookieDebugHasher.ExtractCookieValue(rawCookieHeader, AuthConstants.AuthCookieName);
+
+        // Parsed cookie value from ASP.NET Core's cookie collection.
+        string? parsedRequestCookieValue =
+            context.Request.Cookies[AuthConstants.AuthCookieName];
+
+        // Exact cookie value the cookie authentication handler uses internally.
+        string? cookieManagerValue =
+            cookieOptions.CookieManager.GetRequestCookie(context, AuthConstants.AuthCookieName);
 
         AuthenticateResult authResult =
             await context.AuthenticateAsync(AuthConstants.AuthScheme);
 
         authLogger.LogInformation(
-            "Auth diagnostics for {Path}. HasCookieHeader={HasCookieHeader}, CookieHeaderLength={CookieHeaderLength}, AuthCookieFound={AuthCookieFound}, AuthCookieValueLength={AuthCookieValueLength}, AuthCookieValueHash={AuthCookieValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureType={AuthFailureType}, AuthFailureMessage={AuthFailureMessage}, AuthFailureInnerType={AuthFailureInnerType}, AuthFailureInnerMessage={AuthFailureInnerMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}, TicketDataFormatType={TicketDataFormatType}",
+            "Auth diagnostics for {Path}. RawHeaderPresent={RawHeaderPresent}, RawHeaderLength={RawHeaderLength}, RawExtractedFound={RawExtractedFound}, RawExtractedLength={RawExtractedLength}, RawExtractedHash={RawExtractedHash}, ParsedRequestCookieFound={ParsedRequestCookieFound}, ParsedRequestCookieLength={ParsedRequestCookieLength}, ParsedRequestCookieHash={ParsedRequestCookieHash}, CookieManagerValueFound={CookieManagerValueFound}, CookieManagerValueLength={CookieManagerValueLength}, CookieManagerValueHash={CookieManagerValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureType={AuthFailureType}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}, TicketDataFormatType={TicketDataFormatType}",
             context.Request.Path,
-            !string.IsNullOrWhiteSpace(cookieHeader),
-            cookieHeader.Length,
-            !string.IsNullOrWhiteSpace(authCookieValue),
-            authCookieValue?.Length ?? 0,
-            CookieDebugHasher.ComputeSha256(authCookieValue),
+            !string.IsNullOrWhiteSpace(rawCookieHeader),
+            rawCookieHeader.Length,
+            !string.IsNullOrWhiteSpace(rawExtractedCookieValue),
+            rawExtractedCookieValue?.Length ?? 0,
+            CookieDebugHasher.ComputeSha256(rawExtractedCookieValue),
+            !string.IsNullOrWhiteSpace(parsedRequestCookieValue),
+            parsedRequestCookieValue?.Length ?? 0,
+            CookieDebugHasher.ComputeSha256(parsedRequestCookieValue),
+            !string.IsNullOrWhiteSpace(cookieManagerValue),
+            cookieManagerValue?.Length ?? 0,
+            CookieDebugHasher.ComputeSha256(cookieManagerValue),
             authResult.Succeeded,
             authResult.None,
             authResult.Failure?.GetType().FullName,
             authResult.Failure?.Message,
-            authResult.Failure?.InnerException?.GetType().FullName,
-            authResult.Failure?.InnerException?.Message,
             context.User.Identity?.IsAuthenticated ?? false,
             Environment.MachineName,
             cookieOptions.TicketDataFormat?.GetType().FullName ?? "[null]"
         );
 
-        if (!string.IsNullOrWhiteSpace(authCookieValue))
+        if (!string.IsNullOrWhiteSpace(cookieManagerValue))
         {
             try
             {
                 AuthenticationTicket? ticket =
-                    cookieOptions.TicketDataFormat.Unprotect(authCookieValue);
+                    cookieOptions.TicketDataFormat.Unprotect(cookieManagerValue);
 
                 authLogger.LogInformation(
-                    "Manual ticket unprotect result. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}",
+                    "Manual unprotect using CookieManager value. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}",
                     ticket is null,
                     ticket?.Principal?.Identity?.IsAuthenticated ?? false,
-                    ticket?.Principal?.Claims?.Count() ?? 0
+                    ticket?.Principal?.Claims?.Count() ?? 0,
+                    ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.UserIdClaimType) ?? false,
+                    ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.TenantIdClaimType) ?? false
                 );
             }
             catch (Exception ex)
             {
                 authLogger.LogError(
                     ex,
-                    "Manual ticket unprotect threw. ExceptionType={ExceptionType}, InnerExceptionType={InnerExceptionType}, InnerExceptionMessage={InnerExceptionMessage}",
+                    "Manual unprotect using CookieManager value threw. ExceptionType={ExceptionType}, InnerExceptionType={InnerExceptionType}, InnerExceptionMessage={InnerExceptionMessage}",
                     ex.GetType().FullName,
                     ex.InnerException?.GetType().FullName,
                     ex.InnerException?.Message
