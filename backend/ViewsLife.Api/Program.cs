@@ -262,12 +262,13 @@ app.Use(async (context, next) =>
         // Exact cookie value the cookie authentication handler uses internally.
         string? cookieManagerValue =
             cookieOptions.CookieManager.GetRequestCookie(context, AuthConstants.AuthCookieName);
+        string? tlsTokenBinding = TlsTokenBindingHelper.GetTlsTokenBinding(context);
 
         AuthenticateResult authResult =
             await context.AuthenticateAsync(AuthConstants.AuthScheme);
 
         authLogger.LogInformation(
-            "Auth diagnostics for {Path}. RawHeaderPresent={RawHeaderPresent}, RawHeaderLength={RawHeaderLength}, RawExtractedFound={RawExtractedFound}, RawExtractedLength={RawExtractedLength}, RawExtractedHash={RawExtractedHash}, ParsedRequestCookieFound={ParsedRequestCookieFound}, ParsedRequestCookieLength={ParsedRequestCookieLength}, ParsedRequestCookieHash={ParsedRequestCookieHash}, CookieManagerValueFound={CookieManagerValueFound}, CookieManagerValueLength={CookieManagerValueLength}, CookieManagerValueHash={CookieManagerValueHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureType={AuthFailureType}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}, TicketDataFormatType={TicketDataFormatType}",
+            "Auth diagnostics for {Path}. RawHeaderPresent={RawHeaderPresent}, RawHeaderLength={RawHeaderLength}, RawExtractedFound={RawExtractedFound}, RawExtractedLength={RawExtractedLength}, RawExtractedHash={RawExtractedHash}, ParsedRequestCookieFound={ParsedRequestCookieFound}, ParsedRequestCookieLength={ParsedRequestCookieLength}, ParsedRequestCookieHash={ParsedRequestCookieHash}, CookieManagerValueFound={CookieManagerValueFound}, CookieManagerValueLength={CookieManagerValueLength}, CookieManagerValueHash={CookieManagerValueHash}, TlsTokenBindingPresent={TlsTokenBindingPresent}, TlsTokenBindingLength={TlsTokenBindingLength}, TlsTokenBindingHash={TlsTokenBindingHash}, AuthSucceeded={AuthSucceeded}, AuthNone={AuthNone}, AuthFailureType={AuthFailureType}, AuthFailureMessage={AuthFailureMessage}, IdentityIsAuthenticated={IdentityIsAuthenticated}, MachineName={MachineName}, TicketDataFormatType={TicketDataFormatType}",
             context.Request.Path,
             !string.IsNullOrWhiteSpace(rawCookieHeader),
             rawCookieHeader.Length,
@@ -280,6 +281,9 @@ app.Use(async (context, next) =>
             !string.IsNullOrWhiteSpace(cookieManagerValue),
             cookieManagerValue?.Length ?? 0,
             CookieDebugHasher.ComputeSha256(cookieManagerValue),
+            !string.IsNullOrWhiteSpace(tlsTokenBinding),
+            tlsTokenBinding?.Length ?? 0,
+            CookieDebugHasher.ComputeSha256(tlsTokenBinding),
             authResult.Succeeded,
             authResult.None,
             authResult.Failure?.GetType().FullName,
@@ -294,7 +298,9 @@ app.Use(async (context, next) =>
             try
             {
                 AuthenticationTicket? ticket =
-                    cookieOptions.TicketDataFormat.Unprotect(cookieManagerValue);
+                    cookieOptions.TicketDataFormat.Unprotect(
+                        cookieManagerValue,
+                        tlsTokenBinding);
 
                 authLogger.LogInformation(
                     "Manual unprotect using CookieManager value. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}",

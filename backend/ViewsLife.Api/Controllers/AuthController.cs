@@ -189,6 +189,7 @@ public sealed class AuthController : ControllerBase
         string? authCookieValue =
             CookieDebugHasher.ExtractCookieValue(cookieHeader, AuthConstants.AuthCookieName);
 
+
         AuthenticateResult authResult =
             await HttpContext.AuthenticateAsync(AuthConstants.AuthScheme);
 
@@ -288,14 +289,14 @@ public sealed class AuthController : ControllerBase
     }
 
     /// <summary>
-/// Issues the application auth cookie using the supplied session context.
-/// Also performs an immediate local unprotect test against the just-issued cookie
-/// so we can determine whether the backend can read its own cookie in the same request.
-/// </summary>
-/// <param name="response">Authenticated session payload.</param>
-private async Task IssueAuthCookieAsync(AuthResponseDto response)
-{
-    var claims = new List<Claim>
+    /// Issues the application auth cookie using the supplied session context.
+    /// Also performs an immediate local unprotect test against the just-issued cookie
+    /// so we can determine whether the backend can read its own cookie in the same request.
+    /// </summary>
+    /// <param name="response">Authenticated session payload.</param>
+    private async Task IssueAuthCookieAsync(AuthResponseDto response)
+    {
+        var claims = new List<Claim>
     {
         new(AuthConstants.UserIdClaimType, response.UserId),
         new(AuthConstants.TenantIdClaimType, response.TenantId),
@@ -305,76 +306,80 @@ private async Task IssueAuthCookieAsync(AuthResponseDto response)
         new("auth_provider", response.AuthProvider)
     };
 
-    var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
-    var principal = new ClaimsPrincipal(identity);
+        var identity = new ClaimsIdentity(claims, AuthConstants.AuthScheme);
+        var principal = new ClaimsPrincipal(identity);
 
-    await HttpContext.SignInAsync(
-        AuthConstants.AuthScheme,
-        principal,
-        new AuthenticationProperties
+        await HttpContext.SignInAsync(
+            AuthConstants.AuthScheme,
+            principal,
+            new AuthenticationProperties
+            {
+                IsPersistent = true,
+                AllowRefresh = true,
+                IssuedUtc = DateTimeOffset.UtcNow
+            });
+
+        if (HttpContext.Response.Headers.TryGetValue("Set-Cookie", out var setCookieHeaders))
         {
-            IsPersistent = true,
-            AllowRefresh = true,
-            IssuedUtc = DateTimeOffset.UtcNow
-        });
-
-    // Log and test the exact auth cookie that was just written to the response.
-    if (HttpContext.Response.Headers.TryGetValue("Set-Cookie", out var setCookieHeaders))
-    {
-        foreach (string setCookieHeader in setCookieHeaders)
-        {
-            var extracted = CookieDebugHasher.ExtractFromSetCookie(setCookieHeader);
-
-            if (extracted is null)
+            foreach (string setCookieHeader in setCookieHeaders)
             {
-                continue;
-            }
+                var extracted = CookieDebugHasher.ExtractFromSetCookie(setCookieHeader);
 
-            // Only inspect the app auth cookie, not unrelated cookies.
-            if (!string.Equals(
-                    extracted.Value.Name,
-                    AuthConstants.AuthCookieName,
-                    StringComparison.Ordinal))
-            {
-                continue;
-            }
+                if (extracted is null)
+                {
+                    continue;
+                }
 
-            var cookieOptions = _cookieOptionsMonitor.Get(AuthConstants.AuthScheme);
+                if (!string.Equals(
+                        extracted.Value.Name,
+                        AuthConstants.AuthCookieName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            _logger.LogInformation(
-                "Issued auth cookie. MachineName={MachineName}, CookieName={CookieName}, CookieValueLength={CookieValueLength}, CookieValueHash={CookieValueHash}, TicketDataFormatType={TicketDataFormatType}",
-                Environment.MachineName,
-                extracted.Value.Name,
-                extracted.Value.Value.Length,
-                CookieDebugHasher.ComputeSha256(extracted.Value.Value),
-                cookieOptions.TicketDataFormat?.GetType().FullName ?? "[null]"
-            );
-
-            try
-            {
-                AuthenticationTicket? ticket =
-                    cookieOptions.TicketDataFormat.Unprotect(extracted.Value.Value);
+                var cookieOptions = _cookieOptionsMonitor.Get(AuthConstants.AuthScheme);
+                string? tlsTokenBinding = TlsTokenBindingHelper.GetTlsTokenBinding(HttpContext);
 
                 _logger.LogInformation(
-                    "Immediate issued-cookie unprotect result. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}",
-                    ticket is null,
-                    ticket?.Principal?.Identity?.IsAuthenticated ?? false,
-                    ticket?.Principal?.Claims?.Count() ?? 0,
-                    ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.UserIdClaimType) ?? false,
-                    ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.TenantIdClaimType) ?? false
+                    "Issued auth cookie. MachineName={MachineName}, CookieName={CookieName}, CookieValueLength={CookieValueLength}, CookieValueHash={CookieValueHash}, TicketDataFormatType={TicketDataFormatType}, TlsTokenBindingPresent={TlsTokenBindingPresent}, TlsTokenBindingLength={TlsTokenBindingLength}, TlsTokenBindingHash={TlsTokenBindingHash}",
+                    Environment.MachineName,
+                    extracted.Value.Name,
+                    extracted.Value.Value.Length,
+                    CookieDebugHasher.ComputeSha256(extracted.Value.Value),
+                    cookieOptions.TicketDataFormat?.GetType().FullName ?? "[null]",
+                    !string.IsNullOrWhiteSpace(tlsTokenBinding),
+                    tlsTokenBinding?.Length ?? 0,
+                    CookieDebugHasher.ComputeSha256(tlsTokenBinding)
                 );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Immediate issued-cookie unprotect threw. ExceptionType={ExceptionType}, InnerExceptionType={InnerExceptionType}, InnerExceptionMessage={InnerExceptionMessage}",
-                    ex.GetType().FullName,
-                    ex.InnerException?.GetType().FullName,
-                    ex.InnerException?.Message
-                );
+
+                try
+                {
+                    AuthenticationTicket? ticket =
+                        cookieOptions.TicketDataFormat.Unprotect(
+                            extracted.Value.Value,
+                            tlsTokenBinding);
+
+                    _logger.LogInformation(
+                        "Immediate issued-cookie unprotect result. TicketWasNull={TicketWasNull}, PrincipalAuthenticated={PrincipalAuthenticated}, PrincipalClaimCount={PrincipalClaimCount}, UserIdClaimPresent={UserIdClaimPresent}, TenantIdClaimPresent={TenantIdClaimPresent}",
+                        ticket is null,
+                        ticket?.Principal?.Identity?.IsAuthenticated ?? false,
+                        ticket?.Principal?.Claims?.Count() ?? 0,
+                        ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.UserIdClaimType) ?? false,
+                        ticket?.Principal?.HasClaim(c => c.Type == AuthConstants.TenantIdClaimType) ?? false
+                    );
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Immediate issued-cookie unprotect threw. ExceptionType={ExceptionType}, InnerExceptionType={InnerExceptionType}, InnerExceptionMessage={InnerExceptionMessage}",
+                        ex.GetType().FullName,
+                        ex.InnerException?.GetType().FullName,
+                        ex.InnerException?.Message
+                    );
+                }
             }
         }
     }
-}
 }
